@@ -263,8 +263,6 @@ function parseCreatePayload(input) {
 function buildCreatePromptText(xHandleInput) {
 	const xHandle = formatHandle(xHandleInput) || "@your_x_username";
 	return [
-		"Copy this prompt to Grok, then paste the JSON reply here:",
-		"",
 		`Please collect profile info for X account ${xHandle} and return ONLY valid JSON (no markdown, no explanation).`,
 		"Use exactly this schema and keys:",
 		"{",
@@ -278,8 +276,6 @@ function buildCreatePromptText(xHandleInput) {
 		"}",
 		`Rules: "name" must be pure display name only (do not include @handle or URL). The "handle" must be "${xHandle}".`,
 		'If a field is unknown, return an empty string for that field.',
-		"",
-		"After Grok replies, paste the JSON here.",
 	].join("\n");
 }
 
@@ -807,7 +803,15 @@ async function handleMessage(env, message) {
 		});
 		await tg(env, "sendMessage", {
 			chat_id: chatId,
+			text: "Step 1/3: Copy only the next message and send it to Grok.",
+		});
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
 			text: buildCreatePromptText(text),
+		});
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Step 3/3: Paste only Grok's JSON reply here (do not include extra text).",
 		});
 		return;
 	}
