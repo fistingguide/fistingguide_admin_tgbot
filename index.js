@@ -41,7 +41,7 @@ export default {
 		if (chatId && isEchoCommand(text)) {
 			await tg(env, "sendMessage", {
 				chat_id: chatId,
-				text: "你好",
+				text: "你好ddd",
 			});
 		}
 
