@@ -14,6 +14,7 @@ const FIELD_DESCRIPTIONS = {
 	avatar: "Avatar image URL",
 	sexual_orientation: "Sexual orientation",
 	follower: "X followers count",
+	followers_count: "X followers count",
 	created_at: "Record created time",
 	country: "Country",
 	city: "City",
@@ -28,6 +29,54 @@ const FIELD_DESCRIPTIONS = {
 	super_credit: "Super credit",
 	rank: "User rank",
 };
+const FIELD_EMOJIS = {
+	id: "🆔",
+	name: "👤",
+	handle: "🏷️",
+	bio: "📝",
+	profile_url: "🔗",
+	avatar: "🖼️",
+	sexual_orientation: "🌈",
+	follower: "👥",
+	followers_count: "👥",
+	created_at: "📅",
+	country: "🌍",
+	city: "🏙️",
+	province: "🗺️",
+	telegram: "📨",
+	tg_user_id: "🆔",
+	tg_msg_cnt: "💬",
+	tg_photo_cnt: "🖼️",
+	tg_video_cnt: "🎬",
+	list_star_event_cnt: "⭐",
+	total_credit: "💰",
+	super_credit: "💎",
+	rank: "🏆",
+};
+const PROFILE_SECTIONS = [
+	{
+		title: "👤 Basic",
+		fields: ["id", "name", "handle", "bio", "sexual_orientation", "created_at", "country", "province", "city", "rank"],
+	},
+	{
+		title: "🌐 Links",
+		fields: ["profile_url", "avatar", "telegram"],
+	},
+	{
+		title: "📊 Stats",
+		fields: [
+			"followers_count",
+			"follower",
+			"tg_user_id",
+			"tg_msg_cnt",
+			"tg_photo_cnt",
+			"tg_video_cnt",
+			"list_star_event_cnt",
+			"total_credit",
+			"super_credit",
+		],
+	},
+];
 
 let sessionSchemaPromise;
 
@@ -133,16 +182,44 @@ async function clearPendingAction(env, chatId, userId) {
 }
 
 function formatProfile(profile) {
-	const lines = ["<b>Profile Info</b>"];
-	for (const [key, rawValue] of Object.entries(profile || {})) {
+	const obj = profile || {};
+	const lines = ["<b>✨ Profile Info</b>"];
+	const used = new Set();
+
+	for (const section of PROFILE_SECTIONS) {
+		const sectionLines = [];
+		for (const key of section.fields) {
+			if (used.has(key)) continue;
+			const rawValue = obj[key];
+			if (rawValue === null || rawValue === undefined || rawValue === "") continue;
+			used.add(key);
+			let value = rawValue;
+			if (typeof value === "object") {
+				value = JSON.stringify(value);
+			}
+			const label = FIELD_DESCRIPTIONS[key] || key;
+			const emoji = FIELD_EMOJIS[key] || "•";
+			sectionLines.push(`${emoji} <b>${escapeHtml(label)}</b>: ${escapeHtml(value)}`);
+		}
+		if (sectionLines.length > 0) {
+			lines.push("");
+			lines.push(`<b>${escapeHtml(section.title)}</b>`);
+			lines.push(...sectionLines);
+		}
+	}
+
+	for (const [key, rawValue] of Object.entries(obj)) {
+		if (used.has(key)) continue;
 		if (rawValue === null || rawValue === undefined || rawValue === "") continue;
 		let value = rawValue;
 		if (typeof value === "object") {
 			value = JSON.stringify(value);
 		}
-		const desc = FIELD_DESCRIPTIONS[key] ? ` (${FIELD_DESCRIPTIONS[key]})` : "";
-		lines.push(`<b>${escapeHtml(key + desc)}</b>: ${escapeHtml(value)}`);
+		const label = FIELD_DESCRIPTIONS[key] || key;
+		const emoji = FIELD_EMOJIS[key] || "•";
+		lines.push(`${emoji} <b>${escapeHtml(label)}</b>: ${escapeHtml(value)}`);
 	}
+
 	return lines.join("\n");
 }
 
