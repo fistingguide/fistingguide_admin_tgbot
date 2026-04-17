@@ -140,13 +140,10 @@ function getAdminKeyboard() {
 	return {
 		inline_keyboard: [
 			[
-				{ text: "1. View Info", callback_data: ADMIN_VIEW },
-				{ text: "2. Edit Info", callback_data: ADMIN_EDIT },
+				{ text: "1. 🔍 View Info", callback_data: ADMIN_VIEW },
+				{ text: "2. ➕ Create Info", callback_data: ADMIN_CREATE },
 			],
-			[
-				{ text: "3. Create Info", callback_data: ADMIN_CREATE },
-				{ text: "4. Delete Info", callback_data: ADMIN_DELETE },
-			],
+			[{ text: "3. 🗑️ Delete Info", callback_data: ADMIN_DELETE }],
 		],
 	};
 }
