@@ -12,6 +12,9 @@ const VIEW_EDIT = "view:edit_info";
 const EDIT_SELECT = "edit:select_field";
 const EDIT_INPUT = "edit:input_value";
 const EDIT_CONFIRM = "edit:confirm_value";
+const CREATE_WAIT_JSON = "create:wait_json";
+const CREATE_WAIT_TG = "create:wait_tg_handle";
+const CREATE_CONFIRM = "create:confirm";
 
 const EDIT_FIELD_AVATAR = "edit_field:avatar";
 const EDIT_FIELD_TELEGRAM = "edit_field:telegram";
@@ -21,6 +24,9 @@ const EDIT_FIELD_SUPER = "edit_field:super_credit";
 
 const EDIT_CONFIRM_YES = "edit_confirm:yes";
 const EDIT_CONFIRM_NO = "edit_confirm:no";
+const CREATE_CONFIRM_YES = "create_confirm:yes";
+const CREATE_CONFIRM_NO = "create_confirm:no";
+const CREATE_REQUIRED_KEYS = ["name", "handle", "sexual_orientation", "follower", "profile_url", "avatar", "bio"];
 
 const EDIT_FIELD_MAP = {
 	[EDIT_FIELD_AVATAR]: { column: "avatar", label: "Avatar image URL" },
@@ -182,6 +188,12 @@ function getEditConfirmKeyboard() {
 	};
 }
 
+function getCreateConfirmKeyboard() {
+	return {
+		inline_keyboard: [[{ text: "✅ Yes", callback_data: CREATE_CONFIRM_YES }, { text: "❌ No", callback_data: CREATE_CONFIRM_NO }]],
+	};
+}
+
 function normalizeHandle(input) {
 	return String(input || "").trim().replace(/^@+/, "").toLowerCase();
 }
@@ -193,6 +205,43 @@ function isValidHandleInput(text) {
 function formatHandle(handle) {
 	const v = normalizeHandle(handle);
 	return v ? `@${v}` : "";
+}
+
+function isValidTgHandle(input) {
+	return /^@[A-Za-z0-9_]{4,32}$/.test(String(input || "").trim());
+}
+
+function parseCreatePayload(input) {
+	try {
+		const obj = JSON.parse(String(input || ""));
+		if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+			return { ok: false, reason: "JSON must be an object." };
+		}
+		for (const key of CREATE_REQUIRED_KEYS) {
+			if (obj[key] === undefined || obj[key] === null || String(obj[key]).trim() === "") {
+				return { ok: false, reason: `Missing required field: ${key}` };
+			}
+		}
+		return { ok: true, data: obj };
+	} catch {
+		return { ok: false, reason: "Invalid JSON format." };
+	}
+}
+
+function buildCreatePromptText() {
+	return [
+		"Use Grok to collect these fields about yourself and output JSON:",
+		"{",
+		'  "name": "X display name",',
+		'  "handle": "X handle",',
+		'  "sexual_orientation": "Sexual orientation",',
+		'  "follower": "X followers count",',
+		'  "profile_url": "X profile link",',
+		'  "avatar": "Avatar image URL",',
+		'  "bio": "X profile bio"',
+		"}",
+		"Then paste the JSON here.",
+	].join("\n");
 }
 
 async function tg(env, method, payload) {
@@ -429,6 +478,112 @@ async function handleEditConfirm(env, chatId, userId, shouldSave) {
 	});
 }
 
+async function handleCreateConfirm(env, chatId, userId, shouldSave) {
+	const session = await getSession(env, chatId, userId);
+	if (session.action !== CREATE_CONFIRM || !session.draftValue || !session.editField) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "No pending create request found.",
+		});
+		return;
+	}
+
+	if (!shouldSave) {
+		await patchSession(env, chatId, userId, { action: CREATE_WAIT_JSON, draftValue: "", editField: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Create cancelled. Paste a new JSON payload if you want to try again.",
+		});
+		return;
+	}
+
+	const parsed = parseCreatePayload(session.draftValue);
+	if (!parsed.ok) {
+		await patchSession(env, chatId, userId, { action: CREATE_WAIT_JSON, draftValue: "", editField: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `Saved draft is invalid: ${parsed.reason}\nPlease paste JSON again.`,
+		});
+		return;
+	}
+
+	const payload = parsed.data;
+	const table = getProfilesTable(env);
+	const normalizedHandle = normalizeHandle(payload.handle);
+	if (!normalizedHandle) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Invalid handle in JSON.",
+		});
+		return;
+	}
+
+	const existing = await env.DB.prepare(`SELECT id FROM ${table} WHERE lower(ltrim(handle, '@')) = ? LIMIT 1`)
+		.bind(normalizedHandle)
+		.first();
+	if (existing) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `Record already exists for ${formatHandle(normalizedHandle)}.`,
+		});
+		await clearSession(env, chatId, userId);
+		return;
+	}
+
+	const columnsSet = await getTableColumns(env, table);
+	const cols = [];
+	const vals = [];
+
+	function pushValue(column, value) {
+		if (!columnsSet.has(column.toLowerCase())) return;
+		cols.push(column);
+		vals.push(value);
+	}
+
+	pushValue("name", String(payload.name).trim());
+	pushValue("handle", formatHandle(payload.handle));
+	pushValue("sexual_orientation", String(payload.sexual_orientation).trim());
+	pushValue("profile_url", String(payload.profile_url).trim());
+	pushValue("avatar", String(payload.avatar).trim());
+	pushValue("bio", String(payload.bio).trim());
+	pushValue("telegram", String(session.editField).trim());
+
+	const followerNumeric = Number.parseInt(String(payload.follower).replace(/[^\d-]/g, ""), 10);
+	const followerValue = Number.isFinite(followerNumeric) ? followerNumeric : String(payload.follower).trim();
+	if (columnsSet.has("followers_count")) {
+		cols.push("followers_count");
+		vals.push(followerValue);
+	} else if (columnsSet.has("follower")) {
+		cols.push("follower");
+		vals.push(followerValue);
+	}
+
+	if (columnsSet.has("created_at")) {
+		cols.push("created_at");
+		vals.push(new Date().toISOString().slice(0, 19).replace("T", " "));
+	}
+
+	if (cols.length === 0) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "No writable columns matched table schema.",
+		});
+		return;
+	}
+
+	const placeholders = cols.map(() => "?").join(", ");
+	const sql = `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})`;
+	await env.DB.prepare(sql)
+		.bind(...vals)
+		.run();
+
+	await clearSession(env, chatId, userId);
+	await tg(env, "sendMessage", {
+		chat_id: chatId,
+		text: `Created new record for ${formatHandle(payload.handle)}.`,
+	});
+}
+
 async function handleAdminCallback(env, callbackQuery) {
 	const callbackId = callbackQuery?.id;
 	const action = String(callbackQuery?.data || "");
@@ -518,7 +673,29 @@ async function handleAdminCallback(env, callbackQuery) {
 		return;
 	}
 
-	if (action === ADMIN_CREATE || action === ADMIN_DELETE) {
+	if (action === CREATE_CONFIRM_YES || action === CREATE_CONFIRM_NO) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: action === CREATE_CONFIRM_YES ? "Creating..." : "Cancelled.",
+		});
+		await handleCreateConfirm(env, chatId, userId, action === CREATE_CONFIRM_YES);
+		return;
+	}
+
+	if (action === ADMIN_CREATE) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Please paste JSON generated by Grok.",
+		});
+		await patchSession(env, chatId, userId, { action: CREATE_WAIT_JSON, editField: "", draftValue: "", targetHandle: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: buildCreatePromptText(),
+		});
+		return;
+	}
+
+	if (action === ADMIN_DELETE) {
 		await tg(env, "answerCallbackQuery", {
 			callback_query_id: callbackId,
 			text: "This action is not implemented yet.",
@@ -572,6 +749,69 @@ async function handleMessage(env, message) {
 			return;
 		}
 		await handleViewInfo(env, chatId, userId, text);
+		return;
+	}
+
+	if (session.action === CREATE_WAIT_JSON) {
+		const parsed = parseCreatePayload(text);
+		if (!parsed.ok) {
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: `Invalid JSON: ${parsed.reason}\nPlease paste valid JSON payload.`,
+			});
+			return;
+		}
+		await patchSession(env, chatId, userId, {
+			action: CREATE_WAIT_TG,
+			draftValue: JSON.stringify(parsed.data),
+			editField: "",
+			targetHandle: "",
+		});
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Now input your Telegram handle in format @username",
+		});
+		return;
+	}
+
+	if (session.action === CREATE_WAIT_TG) {
+		if (!isValidTgHandle(text)) {
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Invalid Telegram handle format. Please use @username",
+			});
+			return;
+		}
+		const parsed = parseCreatePayload(session.draftValue);
+		if (!parsed.ok) {
+			await patchSession(env, chatId, userId, { action: CREATE_WAIT_JSON, draftValue: "", editField: "" });
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Stored JSON is invalid. Please paste JSON again.",
+			});
+			return;
+		}
+
+		const data = parsed.data;
+		await patchSession(env, chatId, userId, { action: CREATE_CONFIRM, editField: text.trim() });
+		const previewLines = [
+			"Preview (please confirm):",
+			`name: ${data.name}`,
+			`handle: ${data.handle}`,
+			`sexual_orientation: ${data.sexual_orientation}`,
+			`follower: ${data.follower}`,
+			`profile_url: ${data.profile_url}`,
+			`avatar: ${data.avatar}`,
+			`bio: ${data.bio}`,
+			`telegram: ${text.trim()}`,
+			"",
+			"Create this record?",
+		];
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: previewLines.join("\n"),
+			reply_markup: getCreateConfirmKeyboard(),
+		});
 		return;
 	}
 
