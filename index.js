@@ -4,6 +4,7 @@ const ADMIN_VIEW = "admin:view_info";
 const ADMIN_EDIT = "admin:edit_info";
 const ADMIN_CREATE = "admin:create_info";
 const ADMIN_DELETE = "admin:delete_info";
+const ADMIN_ADD_LIST_STAR = "admin:add_list_star";
 
 const VIEW_CONTINUE = "view:continue_query";
 const VIEW_EXIT = "view:exit_query";
@@ -16,6 +17,8 @@ const CREATE_WAIT_X_HANDLE = "create:wait_x_handle";
 const CREATE_WAIT_JSON = "create:wait_json";
 const CREATE_WAIT_TG = "create:wait_tg_handle";
 const CREATE_CONFIRM = "create:confirm";
+const LIST_STAR_WAIT_HANDLE = "list_star:wait_handle";
+const LIST_STAR_CONFIRM = "list_star:confirm";
 
 const EDIT_FIELD_AVATAR = "edit_field:avatar";
 const EDIT_FIELD_TELEGRAM = "edit_field:telegram";
@@ -27,6 +30,8 @@ const EDIT_CONFIRM_YES = "edit_confirm:yes";
 const EDIT_CONFIRM_NO = "edit_confirm:no";
 const CREATE_CONFIRM_YES = "create_confirm:yes";
 const CREATE_CONFIRM_NO = "create_confirm:no";
+const LIST_STAR_CONFIRM_YES = "list_star_confirm:yes";
+const LIST_STAR_CONFIRM_NO = "list_star_confirm:no";
 const CREATE_REQUIRED_KEYS = ["name", "handle", "sexual_orientation", "follower", "profile_url", "avatar", "bio"];
 
 const EDIT_FIELD_MAP = {
@@ -37,7 +42,7 @@ const EDIT_FIELD_MAP = {
 	[EDIT_FIELD_SUPER]: { column: "super_credit", label: "Super credit" },
 };
 
-const ADMIN_ACTIONS = new Set([ADMIN_VIEW, ADMIN_EDIT, ADMIN_CREATE, ADMIN_DELETE]);
+const ADMIN_ACTIONS = new Set([ADMIN_VIEW, ADMIN_EDIT, ADMIN_CREATE, ADMIN_DELETE, ADMIN_ADD_LIST_STAR]);
 const EDIT_FIELD_ACTIONS = new Set(Object.keys(EDIT_FIELD_MAP));
 const FIELD_DESCRIPTIONS = {
 	id: "Primary key",
@@ -147,10 +152,13 @@ function getAdminKeyboard() {
 	return {
 		inline_keyboard: [
 			[
-				{ text: "1. 🔍 View Info", callback_data: ADMIN_VIEW },
-				{ text: "2. ➕ Create Info", callback_data: ADMIN_CREATE },
+				{ text: "🔍 View Info", callback_data: ADMIN_VIEW },
+				{ text: "➕ Create Info", callback_data: ADMIN_CREATE },
 			],
-			[{ text: "3. 🗑️ Delete Info", callback_data: ADMIN_DELETE }],
+			[
+				{ text: "⭐ Add to List Star", callback_data: ADMIN_ADD_LIST_STAR },
+				{ text: "🗑️ Delete Info", callback_data: ADMIN_DELETE },
+			],
 		],
 	};
 }
@@ -195,6 +203,12 @@ function getCreateConfirmKeyboard() {
 	};
 }
 
+function getListStarConfirmKeyboard() {
+	return {
+		inline_keyboard: [[{ text: "✅ Yes", callback_data: LIST_STAR_CONFIRM_YES }, { text: "❌ No", callback_data: LIST_STAR_CONFIRM_NO }]],
+	};
+}
+
 function normalizeHandle(input) {
 	return String(input || "").trim().replace(/^@+/, "").toLowerCase();
 }
@@ -235,6 +249,13 @@ function sanitizeDisplayName(nameInput, handleInput) {
 		return handle ? handle.replace(/^@/, "") : "";
 	}
 	return name;
+}
+
+function buildStarredName(nameInput) {
+	let name = String(nameInput || "").trim();
+	if (!name) return "⭐";
+	name = name.replace(/^⭐\s*/u, "").trim();
+	return `⭐ ${name}`;
 }
 
 function parseCreatePayload(input) {
@@ -619,6 +640,118 @@ async function handleCreateConfirm(env, chatId, userId, shouldSave) {
 	});
 }
 
+async function getProfileByHandle(env, handleInput) {
+	const handle = normalizeHandle(handleInput);
+	if (!handle) {
+		return { error: "Invalid handle." };
+	}
+	const table = getProfilesTable(env);
+	const sql = `SELECT * FROM ${table} WHERE lower(ltrim(handle, '@')) = ? LIMIT 2`;
+	const result = await env.DB.prepare(sql).bind(handle).all();
+	const rows = Array.isArray(result?.results) ? result.results : [];
+	if (rows.length === 0) {
+		return { error: "No matching record found." };
+	}
+	if (rows.length > 1) {
+		return { error: "Multiple matching records found. Please refine the handle." };
+	}
+	return { row: rows[0], handle };
+}
+
+async function prepareListStarPreview(env, chatId, userId, handleInput) {
+	const profile = await getProfileByHandle(env, handleInput);
+	if (profile.error) {
+		await tg(env, "sendMessage", { chat_id: chatId, text: profile.error });
+		return;
+	}
+	const updated = {
+		...profile.row,
+		name: buildStarredName(profile.row?.name),
+		list_star_event_cnt: 1000,
+		super_credit: 100000000,
+	};
+	await patchSession(env, chatId, userId, {
+		action: LIST_STAR_CONFIRM,
+		targetHandle: profile.handle,
+		editField: "",
+		draftValue: "",
+	});
+	await tg(env, "sendMessage", {
+		chat_id: chatId,
+		text: `${formatProfile(updated)}\n\nApply this update?`,
+		parse_mode: "HTML",
+		disable_web_page_preview: true,
+		reply_markup: getListStarConfirmKeyboard(),
+	});
+}
+
+async function handleListStarConfirm(env, chatId, userId, shouldSave) {
+	const session = await getSession(env, chatId, userId);
+	if (session.action !== LIST_STAR_CONFIRM || !session.targetHandle) {
+		await tg(env, "sendMessage", { chat_id: chatId, text: "No pending List Star request found." });
+		return;
+	}
+	if (!shouldSave) {
+		await patchSession(env, chatId, userId, { action: "", editField: "", draftValue: "" });
+		await tg(env, "sendMessage", { chat_id: chatId, text: "List Star update cancelled." });
+		return;
+	}
+
+	const profile = await getProfileByHandle(env, session.targetHandle);
+	if (profile.error) {
+		await tg(env, "sendMessage", { chat_id: chatId, text: profile.error });
+		return;
+	}
+
+	const table = getProfilesTable(env);
+	const columns = await getTableColumns(env, table);
+	const sets = [];
+	const values = [];
+
+	if (columns.has("name")) {
+		sets.push("name = ?");
+		values.push(buildStarredName(profile.row?.name));
+	}
+	if (columns.has("list_star_event_cnt")) {
+		sets.push("list_star_event_cnt = ?");
+		values.push(1000);
+	}
+	if (columns.has("super_credit")) {
+		sets.push("super_credit = ?");
+		values.push(100000000);
+	}
+
+	if (sets.length === 0) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "No target columns found (name/list_star_event_cnt/super_credit).",
+		});
+		return;
+	}
+
+	values.push(normalizeHandle(session.targetHandle));
+	const sql = `UPDATE ${table} SET ${sets.join(", ")} WHERE lower(ltrim(handle, '@')) = ?`;
+	const updateResult = await env.DB.prepare(sql).bind(...values).run();
+	const changes = Number(updateResult?.meta?.changes || 0);
+	if (changes === 0) {
+		await tg(env, "sendMessage", { chat_id: chatId, text: "No record updated." });
+		return;
+	}
+
+	const refreshed = await getProfileByHandle(env, session.targetHandle);
+	await patchSession(env, chatId, userId, { action: "", editField: "", draftValue: "" });
+	if (refreshed.row) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `${formatProfile(refreshed.row)}\n\nList Star update applied.`,
+			parse_mode: "HTML",
+			disable_web_page_preview: true,
+		});
+		return;
+	}
+	await tg(env, "sendMessage", { chat_id: chatId, text: "List Star update applied." });
+}
+
 async function handleAdminCallback(env, callbackQuery) {
 	const callbackId = callbackQuery?.id;
 	const action = String(callbackQuery?.data || "");
@@ -717,6 +850,15 @@ async function handleAdminCallback(env, callbackQuery) {
 		return;
 	}
 
+	if (action === LIST_STAR_CONFIRM_YES || action === LIST_STAR_CONFIRM_NO) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: action === LIST_STAR_CONFIRM_YES ? "Applying..." : "Cancelled.",
+		});
+		await handleListStarConfirm(env, chatId, userId, action === LIST_STAR_CONFIRM_YES);
+		return;
+	}
+
 	if (action === ADMIN_CREATE) {
 		await tg(env, "answerCallbackQuery", {
 			callback_query_id: callbackId,
@@ -726,6 +868,19 @@ async function handleAdminCallback(env, callbackQuery) {
 		await tg(env, "sendMessage", {
 			chat_id: chatId,
 			text: "Please input your X handle first (format: @xxx).",
+		});
+		return;
+	}
+
+	if (action === ADMIN_ADD_LIST_STAR) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Please enter an X handle in format @xxx.",
+		});
+		await patchSession(env, chatId, userId, { action: LIST_STAR_WAIT_HANDLE, editField: "", draftValue: "", targetHandle: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Please input X handle to add List Star (format: @xxx).",
 		});
 		return;
 	}
@@ -813,6 +968,18 @@ async function handleMessage(env, message) {
 			chat_id: chatId,
 			text: "Step 3/3: Paste only Grok's JSON reply here (do not include extra text).",
 		});
+		return;
+	}
+
+	if (session.action === LIST_STAR_WAIT_HANDLE) {
+		if (!isValidHandleInput(text)) {
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Invalid X handle format. Please use @xxx",
+			});
+			return;
+		}
+		await prepareListStarPreview(env, chatId, userId, text);
 		return;
 	}
 
