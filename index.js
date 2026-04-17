@@ -21,10 +21,25 @@ async function tg(env, method, payload) {
 	}
 }
 
-function isEchoCommand(text) {
+function isAdminCommand(text) {
 	if (!text) return false;
 	const command = String(text).trim().split(/\s+/)[0].toLowerCase();
-	return command === "/echo" || command.startsWith("/echo@");
+	return command === "/admin" || command.startsWith("/admin@");
+}
+
+function getAdminKeyboard() {
+	return {
+		inline_keyboard: [
+			[
+				{ text: "1. View Info", callback_data: "admin:view_info" },
+				{ text: "2. Edit Info", callback_data: "admin:edit_info" },
+			],
+			[
+				{ text: "3. Create Info", callback_data: "admin:create_info" },
+				{ text: "4. Delete Info", callback_data: "admin:delete_info" },
+			],
+		],
+	};
 }
 
 export default {
@@ -38,10 +53,21 @@ export default {
 		const chatId = message?.chat?.id;
 		const text = message?.text;
 
-		if (chatId && isEchoCommand(text)) {
+		if (chatId && isAdminCommand(text)) {
 			await tg(env, "sendMessage", {
 				chat_id: chatId,
-				text: "你好ddd",
+				text: "Admin panel: choose an action.",
+				reply_markup: getAdminKeyboard(),
+			});
+		}
+
+		const callbackQuery = update?.callback_query;
+		const callbackId = callbackQuery?.id;
+		const callbackData = callbackQuery?.data;
+		if (callbackId && String(callbackData || "").startsWith("admin:")) {
+			await tg(env, "answerCallbackQuery", {
+				callback_query_id: callbackId,
+				text: "This action is not implemented yet.",
 			});
 		}
 
