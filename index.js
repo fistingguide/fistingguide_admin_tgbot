@@ -157,7 +157,7 @@ async function handleViewInfo(env, chatId, handleInput) {
 	}
 
 	const table = getProfilesTable(env);
-	const sql = `SELECT * FROM ${table} WHERE lower(handle) = ? LIMIT 2`;
+	const sql = `SELECT * FROM ${table} WHERE lower(ltrim(handle, '@')) = ? LIMIT 2`;
 	const result = await env.DB.prepare(sql).bind(handle).all();
 	const rows = Array.isArray(result?.results) ? result.results : [];
 
