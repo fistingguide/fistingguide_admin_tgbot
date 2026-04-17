@@ -1,0 +1,8 @@
+﻿name = "fgadmin_bot"
+main = "index.js"
+compatibility_date = "2026-04-17"
+
+d1_databases = [
+  { binding = "DB", database_id = "d6f69b40-6768-431d-a2a4-2233aa802bc7", database_name = "japs" }
+]
+
