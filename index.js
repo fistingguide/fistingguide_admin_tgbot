@@ -4,6 +4,9 @@ const ADMIN_VIEW = "admin:view_info";
 const ADMIN_EDIT = "admin:edit_info";
 const ADMIN_CREATE = "admin:create_info";
 const ADMIN_DELETE = "admin:delete_info";
+const VIEW_CONTINUE = "view:continue_query";
+const VIEW_EXIT = "view:exit_query";
+const VIEW_EDIT = "view:edit_info";
 const ADMIN_ACTIONS = new Set([ADMIN_VIEW, ADMIN_EDIT, ADMIN_CREATE, ADMIN_DELETE]);
 const FIELD_DESCRIPTIONS = {
 	id: "Primary key",
@@ -120,6 +123,18 @@ function getAdminKeyboard() {
 				{ text: "3. Create Info", callback_data: ADMIN_CREATE },
 				{ text: "4. Delete Info", callback_data: ADMIN_DELETE },
 			],
+		],
+	};
+}
+
+function getViewResultKeyboard() {
+	return {
+		inline_keyboard: [
+			[
+				{ text: "1. Continue Query", callback_data: VIEW_CONTINUE },
+				{ text: "2. Exit Query", callback_data: VIEW_EXIT },
+			],
+			[{ text: "3. Edit Info", callback_data: VIEW_EDIT }],
 		],
 	};
 }
@@ -259,6 +274,7 @@ async function handleViewInfo(env, chatId, handleInput) {
 		text: formatProfile(rows[0]),
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
+		reply_markup: getViewResultKeyboard(),
 	});
 }
 
@@ -268,7 +284,56 @@ async function handleAdminCallback(env, callbackQuery) {
 	const chatId = callbackQuery?.message?.chat?.id;
 	const userId = callbackQuery?.from?.id;
 
-	if (!callbackId || !ADMIN_ACTIONS.has(action)) {
+	if (!callbackId) {
+		return;
+	}
+
+	if (action === VIEW_CONTINUE) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Please enter an X handle in format @xxx.",
+		});
+		if (chatId && userId) {
+			await setPendingAction(env, chatId, userId, ADMIN_VIEW);
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Please enter an X handle in format @xxx",
+			});
+		}
+		return;
+	}
+
+	if (action === VIEW_EXIT) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Query exited.",
+		});
+		if (chatId && userId) {
+			await clearPendingAction(env, chatId, userId);
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Query exited. Send /admin to start again.",
+			});
+		}
+		return;
+	}
+
+	if (action === VIEW_EDIT) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Please enter an X handle in format @xxx.",
+		});
+		if (chatId && userId) {
+			await setPendingAction(env, chatId, userId, ADMIN_EDIT);
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Please enter an X handle in format @xxx",
+			});
+		}
+		return;
+	}
+
+	if (!ADMIN_ACTIONS.has(action)) {
 		return;
 	}
 
