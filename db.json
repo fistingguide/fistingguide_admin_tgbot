@@ -1,0 +1,23 @@
+﻿{
+  "id": "Primary key",
+  "name": "X display name",
+  "handle": "X handle",
+  "bio": "X profile bio",
+  "profile_url": "X profile link",
+  "avatar": "Avatar image URL",
+  "sexual_orientation": "Sexual orientation",
+  "follower": "X followers count",
+  "created_at": "Record created time",
+  "country": "Country",
+  "city": "City",
+  "province": "Province",
+  "telegram": "Telegram handle",
+  "tg_user_id": "Telegram user ID",
+  "tg_msg_cnt": "Telegram message count",
+  "tg_photo_cnt": "Telegram photo count",
+  "tg_video_cnt": "Telegram video count",
+  "list_star_event_cnt": "List star event points",
+  "total_credit": "Total credit",
+  "super_credit": "Super credit",
+  "rank": "User rank"
+}
