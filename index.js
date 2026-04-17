@@ -4,10 +4,34 @@ const ADMIN_VIEW = "admin:view_info";
 const ADMIN_EDIT = "admin:edit_info";
 const ADMIN_CREATE = "admin:create_info";
 const ADMIN_DELETE = "admin:delete_info";
+
 const VIEW_CONTINUE = "view:continue_query";
 const VIEW_EXIT = "view:exit_query";
 const VIEW_EDIT = "view:edit_info";
+
+const EDIT_SELECT = "edit:select_field";
+const EDIT_INPUT = "edit:input_value";
+const EDIT_CONFIRM = "edit:confirm_value";
+
+const EDIT_FIELD_AVATAR = "edit_field:avatar";
+const EDIT_FIELD_TELEGRAM = "edit_field:telegram";
+const EDIT_FIELD_FOLLOWERS = "edit_field:followers_count";
+const EDIT_FIELD_STAR = "edit_field:list_star_event_cnt";
+const EDIT_FIELD_SUPER = "edit_field:super_credit";
+
+const EDIT_CONFIRM_YES = "edit_confirm:yes";
+const EDIT_CONFIRM_NO = "edit_confirm:no";
+
+const EDIT_FIELD_MAP = {
+	[EDIT_FIELD_AVATAR]: { column: "avatar", label: "Avatar image URL" },
+	[EDIT_FIELD_TELEGRAM]: { column: "telegram", label: "Telegram handle" },
+	[EDIT_FIELD_FOLLOWERS]: { column: "followers_count", fallbackColumn: "follower", label: "X followers count" },
+	[EDIT_FIELD_STAR]: { column: "list_star_event_cnt", label: "List star event points" },
+	[EDIT_FIELD_SUPER]: { column: "super_credit", label: "Super credit" },
+};
+
 const ADMIN_ACTIONS = new Set([ADMIN_VIEW, ADMIN_EDIT, ADMIN_CREATE, ADMIN_DELETE]);
+const EDIT_FIELD_ACTIONS = new Set(Object.keys(EDIT_FIELD_MAP));
 const FIELD_DESCRIPTIONS = {
 	id: "Primary key",
 	name: "X display name",
@@ -139,12 +163,39 @@ function getViewResultKeyboard() {
 	};
 }
 
+function getEditFieldKeyboard() {
+	return {
+		inline_keyboard: [
+			[
+				{ text: "1. Avatar image URL", callback_data: EDIT_FIELD_AVATAR },
+				{ text: "2. Telegram handle", callback_data: EDIT_FIELD_TELEGRAM },
+			],
+			[
+				{ text: "3. X followers count", callback_data: EDIT_FIELD_FOLLOWERS },
+				{ text: "4. List star event points", callback_data: EDIT_FIELD_STAR },
+			],
+			[{ text: "5. Super credit", callback_data: EDIT_FIELD_SUPER }],
+		],
+	};
+}
+
+function getEditConfirmKeyboard() {
+	return {
+		inline_keyboard: [[{ text: "✅ Confirm", callback_data: EDIT_CONFIRM_YES }, { text: "❌ Cancel", callback_data: EDIT_CONFIRM_NO }]],
+	};
+}
+
 function normalizeHandle(input) {
 	return String(input || "").trim().replace(/^@+/, "").toLowerCase();
 }
 
 function isValidHandleInput(text) {
 	return /^@[A-Za-z0-9_]{1,15}$/.test(String(text || "").trim());
+}
+
+function formatHandle(handle) {
+	const v = normalizeHandle(handle);
+	return v ? `@${v}` : "";
 }
 
 async function tg(env, method, payload) {
@@ -166,34 +217,70 @@ async function ensureSessionSchema(env) {
 	}
 	if (!sessionSchemaPromise) {
 		sessionSchemaPromise = env.DB.prepare(
-			"CREATE TABLE IF NOT EXISTS admin_sessions (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(chat_id, user_id))"
+			"CREATE TABLE IF NOT EXISTS admin_session_state (chat_id TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL DEFAULT '', target_handle TEXT NOT NULL DEFAULT '', edit_field TEXT NOT NULL DEFAULT '', draft_value TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(chat_id, user_id))"
 		).run();
 	}
 	await sessionSchemaPromise;
 }
 
-async function setPendingAction(env, chatId, userId, action) {
+async function getSession(env, chatId, userId) {
 	await ensureSessionSchema(env);
-	await env.DB.prepare(
-		"INSERT OR REPLACE INTO admin_sessions (chat_id, user_id, action, created_at) VALUES (?, ?, ?, datetime('now'))"
+	const row = await env.DB.prepare(
+		"SELECT action, target_handle, edit_field, draft_value FROM admin_session_state WHERE chat_id = ? AND user_id = ?"
 	)
-		.bind(String(chatId), String(userId), String(action))
-		.run();
-}
-
-async function getPendingAction(env, chatId, userId) {
-	await ensureSessionSchema(env);
-	const row = await env.DB.prepare("SELECT action FROM admin_sessions WHERE chat_id = ? AND user_id = ?")
 		.bind(String(chatId), String(userId))
 		.first();
-	return row?.action ? String(row.action) : "";
+	if (!row) {
+		return { action: "", targetHandle: "", editField: "", draftValue: "" };
+	}
+	return {
+		action: String(row.action || ""),
+		targetHandle: String(row.target_handle || ""),
+		editField: String(row.edit_field || ""),
+		draftValue: String(row.draft_value || ""),
+	};
 }
 
-async function clearPendingAction(env, chatId, userId) {
+async function patchSession(env, chatId, userId, patch) {
+	const current = await getSession(env, chatId, userId);
+	const next = {
+		action: patch.action !== undefined ? String(patch.action || "") : current.action,
+		targetHandle: patch.targetHandle !== undefined ? String(patch.targetHandle || "") : current.targetHandle,
+		editField: patch.editField !== undefined ? String(patch.editField || "") : current.editField,
+		draftValue: patch.draftValue !== undefined ? String(patch.draftValue || "") : current.draftValue,
+	};
+	await env.DB.prepare(
+		"INSERT INTO admin_session_state (chat_id, user_id, action, target_handle, edit_field, draft_value, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(chat_id, user_id) DO UPDATE SET action = excluded.action, target_handle = excluded.target_handle, edit_field = excluded.edit_field, draft_value = excluded.draft_value, created_at = excluded.created_at"
+	)
+		.bind(String(chatId), String(userId), next.action, next.targetHandle, next.editField, next.draftValue)
+		.run();
+	return next;
+}
+
+async function clearSession(env, chatId, userId) {
 	await ensureSessionSchema(env);
-	await env.DB.prepare("DELETE FROM admin_sessions WHERE chat_id = ? AND user_id = ?")
+	await env.DB.prepare("DELETE FROM admin_session_state WHERE chat_id = ? AND user_id = ?")
 		.bind(String(chatId), String(userId))
 		.run();
+}
+
+async function getTableColumns(env, table) {
+	const result = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+	const rows = Array.isArray(result?.results) ? result.results : [];
+	return new Set(rows.map((x) => String(x.name || "").toLowerCase()).filter(Boolean));
+}
+
+async function resolveEditColumn(env, table, fieldAction) {
+	const spec = EDIT_FIELD_MAP[fieldAction];
+	if (!spec) return null;
+	const columns = await getTableColumns(env, table);
+	if (columns.has(spec.column.toLowerCase())) {
+		return spec.column;
+	}
+	if (spec.fallbackColumn && columns.has(spec.fallbackColumn.toLowerCase())) {
+		return spec.fallbackColumn;
+	}
+	return null;
 }
 
 function formatProfile(profile) {
@@ -238,7 +325,16 @@ function formatProfile(profile) {
 	return lines.join("\n");
 }
 
-async function handleViewInfo(env, chatId, handleInput) {
+async function showEditFieldSelector(env, chatId, targetHandle) {
+	const suffix = targetHandle ? `\nCurrent target: ${formatHandle(targetHandle)}` : "\nNo target selected yet.";
+	await tg(env, "sendMessage", {
+		chat_id: chatId,
+		text: `Choose a field to edit.${suffix}`,
+		reply_markup: getEditFieldKeyboard(),
+	});
+}
+
+async function handleViewInfo(env, chatId, userId, handleInput) {
 	const handle = normalizeHandle(handleInput);
 	if (!handle) {
 		await tg(env, "sendMessage", {
@@ -269,12 +365,70 @@ async function handleViewInfo(env, chatId, handleInput) {
 		return;
 	}
 
+	await patchSession(env, chatId, userId, { action: "", targetHandle: handle, editField: "", draftValue: "" });
+
 	await tg(env, "sendMessage", {
 		chat_id: chatId,
 		text: formatProfile(rows[0]),
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
 		reply_markup: getViewResultKeyboard(),
+	});
+}
+
+async function handleEditConfirm(env, chatId, userId, shouldSave) {
+	const session = await getSession(env, chatId, userId);
+	if (session.action !== EDIT_CONFIRM || !session.editField || !session.draftValue || !session.targetHandle) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "No pending edit found.",
+		});
+		return;
+	}
+
+	if (!shouldSave) {
+		await patchSession(env, chatId, userId, { action: EDIT_SELECT, draftValue: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Edit cancelled. Choose another field.",
+			reply_markup: getEditFieldKeyboard(),
+		});
+		return;
+	}
+
+	const table = getProfilesTable(env);
+	const spec = EDIT_FIELD_MAP[session.editField];
+	if (!spec) {
+		await tg(env, "sendMessage", { chat_id: chatId, text: "Unknown edit field." });
+		return;
+	}
+
+	const column = await resolveEditColumn(env, table, session.editField);
+	if (!column) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `Column not found for \"${spec.label}\" in table ${table}.`,
+		});
+		return;
+	}
+
+	const sql = `UPDATE ${table} SET ${column} = ? WHERE lower(ltrim(handle, '@')) = ?`;
+	const result = await env.DB.prepare(sql).bind(session.draftValue, normalizeHandle(session.targetHandle)).run();
+	const changes = Number(result?.meta?.changes || 0);
+
+	if (changes === 0) {
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `No record updated for ${formatHandle(session.targetHandle)}.`,
+		});
+		return;
+	}
+
+	await patchSession(env, chatId, userId, { action: EDIT_SELECT, draftValue: "" });
+	await tg(env, "sendMessage", {
+		chat_id: chatId,
+		text: `Updated ${spec.label} for ${formatHandle(session.targetHandle)}.`,
+		reply_markup: getEditFieldKeyboard(),
 	});
 }
 
@@ -288,18 +442,24 @@ async function handleAdminCallback(env, callbackQuery) {
 		return;
 	}
 
-	if (action === VIEW_CONTINUE) {
+	if (!chatId || !userId) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Invalid callback context.",
+		});
+		return;
+	}
+
+	if (action === VIEW_CONTINUE || action === ADMIN_VIEW) {
 		await tg(env, "answerCallbackQuery", {
 			callback_query_id: callbackId,
 			text: "Please enter an X handle in format @xxx.",
 		});
-		if (chatId && userId) {
-			await setPendingAction(env, chatId, userId, ADMIN_VIEW);
-			await tg(env, "sendMessage", {
-				chat_id: chatId,
-				text: "Please enter an X handle in format @xxx",
-			});
-		}
+		await patchSession(env, chatId, userId, { action: ADMIN_VIEW, editField: "", draftValue: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Please enter an X handle in format @xxx",
+		});
 		return;
 	}
 
@@ -308,60 +468,94 @@ async function handleAdminCallback(env, callbackQuery) {
 			callback_query_id: callbackId,
 			text: "Query exited.",
 		});
-		if (chatId && userId) {
-			await clearPendingAction(env, chatId, userId);
-			await tg(env, "sendMessage", {
-				chat_id: chatId,
-				text: "Query exited. Send /admin to start again.",
-			});
-		}
+		await clearSession(env, chatId, userId);
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Query exited. Send /admin to start again.",
+		});
 		return;
 	}
 
-	if (action === VIEW_EDIT) {
+	if (action === VIEW_EDIT || action === ADMIN_EDIT) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "Choose a field to edit.",
+		});
+		const session = await patchSession(env, chatId, userId, { action: EDIT_SELECT, editField: "", draftValue: "" });
+		await showEditFieldSelector(env, chatId, session.targetHandle);
+		return;
+	}
+
+	if (EDIT_FIELD_ACTIONS.has(action)) {
+		const spec = EDIT_FIELD_MAP[action];
+		const session = await getSession(env, chatId, userId);
+		if (!session.targetHandle) {
+			await tg(env, "answerCallbackQuery", {
+				callback_query_id: callbackId,
+				text: "Please query a handle first.",
+			});
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Please use View Info first, then return to Edit Info.",
+			});
+			return;
+		}
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: `Editing ${spec.label}`,
+		});
+		await patchSession(env, chatId, userId, { action: EDIT_INPUT, editField: action, draftValue: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: `Please input new value for ${spec.label} of ${formatHandle(session.targetHandle)}.`,
+		});
+		return;
+	}
+
+	if (action === EDIT_CONFIRM_YES || action === EDIT_CONFIRM_NO) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: action === EDIT_CONFIRM_YES ? "Saving..." : "Cancelled.",
+		});
+		await handleEditConfirm(env, chatId, userId, action === EDIT_CONFIRM_YES);
+		return;
+	}
+
+	if (action === ADMIN_CREATE || action === ADMIN_DELETE) {
+		await tg(env, "answerCallbackQuery", {
+			callback_query_id: callbackId,
+			text: "This action is not implemented yet.",
+		});
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "This action is not implemented yet.",
+		});
+		return;
+	}
+
+	if (ADMIN_ACTIONS.has(action)) {
 		await tg(env, "answerCallbackQuery", {
 			callback_query_id: callbackId,
 			text: "Please enter an X handle in format @xxx.",
 		});
-		if (chatId && userId) {
-			await setPendingAction(env, chatId, userId, ADMIN_EDIT);
-			await tg(env, "sendMessage", {
-				chat_id: chatId,
-				text: "Please enter an X handle in format @xxx",
-			});
-		}
-		return;
+		await patchSession(env, chatId, userId, { action, editField: "", draftValue: "" });
+		await tg(env, "sendMessage", {
+			chat_id: chatId,
+			text: "Please enter an X handle in format @xxx",
+		});
 	}
-
-	if (!ADMIN_ACTIONS.has(action)) {
-		return;
-	}
-
-	await tg(env, "answerCallbackQuery", {
-		callback_query_id: callbackId,
-		text: "Please enter an X handle in format @xxx.",
-	});
-
-	if (!chatId || !userId) {
-		return;
-	}
-
-	await setPendingAction(env, chatId, userId, action);
-	await tg(env, "sendMessage", {
-		chat_id: chatId,
-		text: "Please enter an X handle in format @xxx",
-	});
 }
 
 async function handleMessage(env, message) {
 	const chatId = message?.chat?.id;
 	const userId = message?.from?.id;
 	const text = String(message?.text || "").trim();
-	if (!chatId || !text) {
+	if (!chatId || !userId || !text) {
 		return;
 	}
 
 	if (isAdminCommand(text)) {
+		await patchSession(env, chatId, userId, { action: "", editField: "", draftValue: "" });
 		await tg(env, "sendMessage", {
 			chat_id: chatId,
 			text: "Admin panel: choose an action.",
@@ -370,34 +564,40 @@ async function handleMessage(env, message) {
 		return;
 	}
 
-	if (!userId) {
+	const session = await getSession(env, chatId, userId);
+
+	if (session.action === ADMIN_VIEW) {
+		if (!isValidHandleInput(text)) {
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Invalid format. Please enter handle as @xxx",
+			});
+			return;
+		}
+		await handleViewInfo(env, chatId, userId, text);
 		return;
 	}
 
-	const action = await getPendingAction(env, chatId, userId);
-	if (!ADMIN_ACTIONS.has(action)) {
-		return;
-	}
+	if (session.action === EDIT_INPUT) {
+		const spec = EDIT_FIELD_MAP[session.editField];
+		if (!spec) {
+			await tg(env, "sendMessage", {
+				chat_id: chatId,
+				text: "Unknown edit field. Please choose field again.",
+				reply_markup: getEditFieldKeyboard(),
+			});
+			await patchSession(env, chatId, userId, { action: EDIT_SELECT, editField: "", draftValue: "" });
+			return;
+		}
 
-	if (!isValidHandleInput(text)) {
+		await patchSession(env, chatId, userId, { action: EDIT_CONFIRM, draftValue: text });
 		await tg(env, "sendMessage", {
 			chat_id: chatId,
-			text: "Invalid format. Please enter handle as @xxx",
+			text: `Confirm update?\nField: ${spec.label}\nTarget: ${formatHandle(session.targetHandle)}\nNew value: ${text}`,
+			reply_markup: getEditConfirmKeyboard(),
 		});
 		return;
 	}
-
-	if (action === ADMIN_VIEW) {
-		await handleViewInfo(env, chatId, text);
-		await clearPendingAction(env, chatId, userId);
-		return;
-	}
-
-	await tg(env, "sendMessage", {
-		chat_id: chatId,
-		text: "This action is not implemented yet.",
-	});
-	await clearPendingAction(env, chatId, userId);
 }
 
 export default {
