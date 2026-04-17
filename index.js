@@ -212,6 +212,31 @@ function isValidTgHandle(input) {
 	return /^@[A-Za-z0-9_]{4,32}$/.test(String(input || "").trim());
 }
 
+function sanitizeDisplayName(nameInput, handleInput) {
+	let name = String(nameInput || "").trim();
+	const handle = formatHandle(handleInput);
+	const normalizedHandle = normalizeHandle(handleInput);
+	if (!name) return "";
+
+	if (handle) {
+		const escapedHandle = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		name = name.replace(new RegExp(`\\s*[-|/:：]\\s*${escapedHandle}\\s*$`, "i"), "");
+		name = name.replace(new RegExp(`\\s*${escapedHandle}\\s*$`, "i"), "");
+	}
+
+	if (normalizedHandle) {
+		const escapedNormalized = normalizedHandle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		name = name.replace(new RegExp(`\\s*[-|/:：]\\s*@?${escapedNormalized}\\s*$`, "i"), "");
+		name = name.replace(new RegExp(`\\s*@${escapedNormalized}\\s*$`, "i"), "");
+	}
+
+	name = name.replace(/\s{2,}/g, " ").trim();
+	if (!name) {
+		return handle ? handle.replace(/^@/, "") : "";
+	}
+	return name;
+}
+
 function parseCreatePayload(input) {
 	try {
 		const obj = JSON.parse(String(input || ""));
@@ -223,7 +248,13 @@ function parseCreatePayload(input) {
 				return { ok: false, reason: `Missing required field: ${key}` };
 			}
 		}
-		return { ok: true, data: obj };
+		const cleaned = { ...obj };
+		cleaned.handle = formatHandle(obj.handle);
+		cleaned.name = sanitizeDisplayName(obj.name, cleaned.handle);
+		if (!cleaned.name) {
+			return { ok: false, reason: "Invalid name after cleanup." };
+		}
+		return { ok: true, data: cleaned };
 	} catch {
 		return { ok: false, reason: "Invalid JSON format." };
 	}
@@ -245,7 +276,8 @@ function buildCreatePromptText(xHandleInput) {
 		'  "avatar": "Avatar image URL",',
 		'  "bio": "X profile bio"',
 		"}",
-		`If a field is unknown, return an empty string for that field. The "handle" must be "${xHandle}".`,
+		`Rules: "name" must be pure display name only (do not include @handle or URL). The "handle" must be "${xHandle}".`,
+		'If a field is unknown, return an empty string for that field.',
 		"",
 		"After Grok replies, paste the JSON here.",
 	].join("\n");
