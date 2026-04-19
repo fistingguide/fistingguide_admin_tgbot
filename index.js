@@ -365,10 +365,21 @@ async function ensureReplyEventSchema(env) {
 	}
 	if (!replyEventSchemaPromise) {
 		replyEventSchemaPromise = env.DB.prepare(
-			"CREATE TABLE IF NOT EXISTS admin_reply_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), event_timestamp INTEGER, event_type TEXT NOT NULL DEFAULT '', rule_id TEXT NOT NULL DEFAULT '', rule_tag TEXT NOT NULL DEFAULT '', rule_value TEXT NOT NULL DEFAULT '', tweet_id TEXT NOT NULL, tweet_text TEXT NOT NULL DEFAULT '', tweet_created_at TEXT NOT NULL DEFAULT '', is_reply INTEGER NOT NULL DEFAULT 0, in_reply_to_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '', tweet_url TEXT NOT NULL DEFAULT '', author_id TEXT NOT NULL DEFAULT '', author_username TEXT NOT NULL DEFAULT '', author_name TEXT NOT NULL DEFAULT '', raw_json TEXT NOT NULL DEFAULT '{}', UNIQUE(tweet_id))"
+			"CREATE TABLE IF NOT EXISTS admin_reply_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), event_timestamp INTEGER, event_type TEXT NOT NULL DEFAULT '', rule_id TEXT NOT NULL DEFAULT '', rule_tag TEXT NOT NULL DEFAULT '', rule_value TEXT NOT NULL DEFAULT '', tweet_id TEXT NOT NULL, tweet_text TEXT NOT NULL DEFAULT '', tweet_created_at TEXT NOT NULL DEFAULT '', is_reply INTEGER NOT NULL DEFAULT 0, in_reply_to_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '', tweet_url TEXT NOT NULL DEFAULT '', author_id TEXT NOT NULL DEFAULT '', author_username TEXT NOT NULL DEFAULT '', author_name TEXT NOT NULL DEFAULT '', followers INTEGER NOT NULL DEFAULT 0, viewCount INTEGER NOT NULL DEFAULT 0, isVerified INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL DEFAULT '', raw_json TEXT NOT NULL DEFAULT '{}', UNIQUE(tweet_id))"
 		).run();
 	}
 	await replyEventSchemaPromise;
+
+	const tableInfo = await env.DB.prepare("PRAGMA table_info(admin_reply_events)").all();
+	const cols = new Set((Array.isArray(tableInfo?.results) ? tableInfo.results : []).map((r) => String(r?.name || "").toLowerCase()));
+	const alterSqls = [];
+	if (!cols.has("followers")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN followers INTEGER NOT NULL DEFAULT 0");
+	if (!cols.has("viewcount")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN viewCount INTEGER NOT NULL DEFAULT 0");
+	if (!cols.has("isverified")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN isVerified INTEGER NOT NULL DEFAULT 0");
+	if (!cols.has("name")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+	for (const sql of alterSqls) {
+		await env.DB.prepare(sql).run();
+	}
 }
 
 function extractReplyEventsFromWebhookPayload(payload) {
@@ -404,6 +415,10 @@ function extractReplyEventsFromWebhookPayload(payload) {
 			author_id: String(author.id || ""),
 			author_username: String(author.userName || ""),
 			author_name: String(author.name || ""),
+			followers: Number.parseInt(String(author.followers ?? "0"), 10) || 0,
+			viewCount: Number.parseInt(String(tweet.viewCount ?? "0"), 10) || 0,
+			isVerified: author.isVerified ? 1 : 0,
+			name: String(author.name || ""),
 			raw_json: JSON.stringify(tweet),
 		});
 	}
@@ -413,7 +428,7 @@ function extractReplyEventsFromWebhookPayload(payload) {
 async function insertReplyEventIfNew(env, event) {
 	await ensureReplyEventSchema(env);
 	const result = await env.DB.prepare(
-		"INSERT INTO admin_reply_events (event_timestamp, event_type, rule_id, rule_tag, rule_value, tweet_id, tweet_text, tweet_created_at, is_reply, in_reply_to_id, conversation_id, tweet_url, author_id, author_username, author_name, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tweet_id) DO NOTHING"
+		"INSERT INTO admin_reply_events (event_timestamp, event_type, rule_id, rule_tag, rule_value, tweet_id, tweet_text, tweet_created_at, is_reply, in_reply_to_id, conversation_id, tweet_url, author_id, author_username, author_name, followers, viewCount, isVerified, name, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tweet_id) DO NOTHING"
 	)
 		.bind(
 			event.event_timestamp,
@@ -431,6 +446,10 @@ async function insertReplyEventIfNew(env, event) {
 			event.author_id,
 			event.author_username,
 			event.author_name,
+			event.followers,
+			event.viewCount,
+			event.isVerified,
+			event.name,
 			event.raw_json
 		)
 		.run();
@@ -532,10 +551,10 @@ function renderLoginPage(errorMsg = "") {
 <body>
   <form class="card" method="post" action="/admin/login">
     <h1>Admin Console</h1>
-    <p>请输入控制台密码</p>
+    <p>Please enter console password</p>
     ${errorBlock}
     <input type="password" name="password" autocomplete="current-password" required />
-    <button type="submit">登录</button>
+    <button type="submit">Sign In</button>
   </form>
 </body>
 </html>`;
@@ -854,8 +873,8 @@ function renderConsolePage() {
       <h1>Dashboard</h1>
       <div class="actions">
         <button id="refreshBalance" class="btn">Refresh Balance</button>
-        <form method="post" action="/admin/logout" class="inline"><button class="btn ghost" type="submit">退出登录</button></form>
-        <a href="/admin/docs" target="_blank" rel="noopener noreferrer" class="btn dark" style="text-decoration:none;display:inline-flex;align-items:center;">文档</a>
+        <form method="post" action="/admin/logout" class="inline"><button class="btn ghost" type="submit">Sign Out</button></form>
+        <a href="/admin/docs" target="_blank" rel="noopener noreferrer" class="btn dark" style="text-decoration:none;display:inline-flex;align-items:center;">Docs</a>
       </div>
     </div>
 
@@ -864,21 +883,21 @@ function renderConsolePage() {
         <div class="metric-card">
           <div id="ringRemaining" class="ring" style="--pct:0"><span id="remainingPct">0%</span></div>
           <div>
-            <p class="metric-title">剩余余额 / Remaining Credits</p>
+            <p class="metric-title">Remaining Credits</p>
             <p id="remainingValue" class="metric-num">-</p>
-            <div id="balanceHint" class="metric-sub">等待刷新</div>
+            <div id="balanceHint" class="metric-sub">Waiting for refresh</div>
           </div>
         </div>
         <div class="metric-card">
           <div id="ringTotal" class="ring" style="--pct:0"><span id="totalPct">0%</span></div>
           <div>
-            <p class="metric-title">总余额 / Total Credits</p>
+            <p class="metric-title">Total Credits</p>
             <p id="totalValue" class="metric-num">-</p>
-            <div id="usedValue" class="metric-sub">已使用: -</div>
+            <div id="usedValue" class="metric-sub">Used: -</div>
           </div>
         </div>
       </div>
-      <p class="muted">余额来源: <code>GET /oapi/my/info</code></p>
+      <p class="muted">Data source: <code>GET /oapi/my/info</code></p>
       <div id="balanceMsg" class="msg"></div>
       <pre id="balanceRaw">{}</pre>
     </section>
@@ -886,24 +905,24 @@ function renderConsolePage() {
     <section class="panel">
       <div class="mgr-toggle">
         <div>
-          <h2 class="section-title">Webhook 管理</h2>
-          <p>点击按钮展开增删改查面板和 Cloudflare webhook 监视面板。</p>
+          <h2 class="section-title">Webhook Manager</h2>
+          <p>Click to open CRUD panels and Cloudflare webhook monitoring.</p>
         </div>
-        <button id="toggleManager" class="btn green">进入 Webhook 管理</button>
+        <button id="toggleManager" class="btn green">Open Webhook Manager</button>
       </div>
     </section>
 
     <section id="managerSection" class="panel mgr-content" hidden>
       <div class="h-actions">
-        <div class="left">Tweet Filter Rule 增删改查 + 本 Worker 的 webhook 监视</div>
+        <div class="left">Tweet Filter Rule CRUD + this Worker's webhook monitor</div>
         <div class="right">
-          <button id="refreshRules" class="btn sm">获取规则</button>
-          <button id="refreshLogs" class="btn sm dark">刷新访问日志</button>
+          <button id="refreshRules" class="btn sm">Fetch Rules</button>
+          <button id="refreshLogs" class="btn sm dark">Refresh Logs</button>
         </div>
       </div>
 
       <div class="sub">
-        <h3>查询规则（Get All）</h3>
+        <h3>Get Rules (Get All)</h3>
         <div class="small-table-wrap">
           <table>
             <thead>
@@ -915,7 +934,7 @@ function renderConsolePage() {
                 <th>is_effect</th>
               </tr>
             </thead>
-            <tbody id="rulesTableBody"><tr><td colspan="5" class="muted">暂无数据</td></tr></tbody>
+            <tbody id="rulesTableBody"><tr><td colspan="5" class="muted">No data</td></tr></tbody>
           </table>
         </div>
         <div id="ruleMsg" class="msg"></div>
@@ -923,43 +942,43 @@ function renderConsolePage() {
 
       <div class="grid-2">
         <div class="sub">
-          <h3>新增规则（Add）</h3>
+          <h3>Add Rule</h3>
           <label>tag</label><input id="addTag" type="text" placeholder="myhook" />
           <label>value</label><input id="addValue" type="text" placeholder="from:elonmusk" />
           <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="300" />
-          <div class="row"><button id="addRuleBtn" class="btn sm green" type="button">添加规则</button></div>
+          <div class="row"><button id="addRuleBtn" class="btn sm green" type="button">Add Rule</button></div>
         </div>
         <div class="sub">
-          <h3>更新规则（Update）</h3>
-          <label>rule_id</label><input id="updRuleId" type="text" placeholder="输入要更新的 rule_id" />
+          <h3>Update Rule</h3>
+          <label>rule_id</label><input id="updRuleId" type="text" placeholder="rule_id to update" />
           <label>tag</label><input id="updTag" type="text" placeholder="updated-tag" />
           <label>value</label><input id="updValue" type="text" placeholder="keyword OR from:xxx" />
           <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="300" />
-          <label>is_effect (1=启用, 0=禁用)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
-          <div class="row"><button id="updRuleBtn" class="btn sm dark" type="button">更新规则</button></div>
+          <label>is_effect (1=enabled, 0=disabled)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
+          <div class="row"><button id="updRuleBtn" class="btn sm dark" type="button">Update Rule</button></div>
         </div>
         <div class="sub">
-          <h3>删除规则（Delete）</h3>
-          <label>rule_id</label><input id="delRuleId" type="text" placeholder="输入要删除的 rule_id" />
-          <div class="row"><button id="delRuleBtn" class="btn sm dark" type="button">删除规则</button></div>
+          <h3>Delete Rule</h3>
+          <label>rule_id</label><input id="delRuleId" type="text" placeholder="rule_id to delete" />
+          <div class="row"><button id="delRuleBtn" class="btn sm dark" type="button">Delete Rule</button></div>
         </div>
         <div class="sub">
-          <h3>监视 Cloudflare Webhook</h3>
+          <h3>Monitor Cloudflare Webhook</h3>
           <p class="k-title">Webhook URL</p>
           <p id="webhookUrl" class="link-box mono"></p>
           <div class="row">
-            <button id="copyWebhookBtn" class="copy-btn" type="button">复制 URL</button>
-            <span class="pill">访问即记录</span>
+            <button id="copyWebhookBtn" class="copy-btn" type="button">Copy URL</button>
+            <span class="pill">Every access is logged</span>
           </div>
           <div class="row">
-            <button id="clearLogsBtn" class="btn sm dark" type="button">清空监视日志</button>
+            <button id="clearLogsBtn" class="btn sm dark" type="button">Clear Logs</button>
           </div>
           <div id="logMsg" class="msg"></div>
         </div>
       </div>
 
       <div class="sub" style="margin-top: 12px;">
-        <h3>访问记录</h3>
+        <h3>Access Logs</h3>
         <div class="small-table-wrap">
           <table>
             <thead>
@@ -973,7 +992,7 @@ function renderConsolePage() {
                 <th>action</th>
               </tr>
             </thead>
-            <tbody id="logsTableBody"><tr><td colspan="7" class="muted">暂无 webhook 访问记录</td></tr></tbody>
+            <tbody id="logsTableBody"><tr><td colspan="7" class="muted">No webhook logs</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1030,7 +1049,7 @@ function renderConsolePage() {
     }
 
     async function refreshBalance() {
-      setMsg(balanceMsg, "加载余额中...");
+      setMsg(balanceMsg, "Loading balance...");
       try {
         const res = await api("/admin/api/balance");
         const d = res.data || {};
@@ -1074,18 +1093,18 @@ function renderConsolePage() {
         totalPct.textContent = Math.round(pTotal) + "%";
         ringRemaining.style.setProperty("--pct", String(p));
         ringTotal.style.setProperty("--pct", String(pTotal));
-        balanceHint.textContent = nUsed !== null ? ("已使用: " + numOrDash(used)) : "已使用: -";
+        balanceHint.textContent = nUsed !== null ? ("Used: " + numOrDash(used)) : "Used: -";
         balanceRaw.textContent = JSON.stringify(d, null, 2);
-        setMsg(balanceMsg, "余额已更新");
+        setMsg(balanceMsg, "Balance updated");
       } catch (err) {
-        setMsg(balanceMsg, err.message || "余额查询失败", true);
+        setMsg(balanceMsg, err.message || "Failed to fetch balance", true);
       }
     }
 
     function renderRules(list) {
       const arr = Array.isArray(list) ? list : [];
       if (arr.length === 0) {
-        rulesBody.innerHTML = '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
+        rulesBody.innerHTML = '<tr><td colspan="5" class="muted">No data</td></tr>';
         return;
       }
       const esc = (v) => String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -1106,14 +1125,14 @@ function renderConsolePage() {
     }
 
     async function refreshRules() {
-      setMsg(ruleMsg, "获取规则中...");
+      setMsg(ruleMsg, "Fetching rules...");
       try {
         const res = await api("/admin/api/rules");
         const list = res.rules || res.data || [];
         renderRules(list);
-        setMsg(ruleMsg, "规则已更新");
+        setMsg(ruleMsg, "Rules updated");
       } catch (err) {
-        setMsg(ruleMsg, err.message || "获取规则失败", true);
+        setMsg(ruleMsg, err.message || "Failed to fetch rules", true);
       }
     }
 
@@ -1122,13 +1141,13 @@ function renderConsolePage() {
     }
 
     async function refreshWebhookLogs() {
-      setMsg(logMsg, "加载 webhook 访问日志...");
+      setMsg(logMsg, "Loading webhook logs...");
       try {
         const res = await api("/admin/api/webhook/logs?limit=120");
         const rows = Array.isArray(res.logs) ? res.logs : [];
         webhookRowsCache = rows;
         if (rows.length === 0) {
-          logsBody.innerHTML = '<tr><td colspan="7" class="muted">暂无 webhook 访问记录</td></tr>';
+          logsBody.innerHTML = '<tr><td colspan="7" class="muted">No webhook logs</td></tr>';
         } else {
           logsBody.innerHTML = rows.map((r, idx) => {
             const bodyPreview = String(r.body_text || "").slice(0, 80);
@@ -1139,15 +1158,15 @@ function renderConsolePage() {
               '<td>' + esc(r.query || "") + '</td>' +
               '<td>' + esc(r.ip || "") + '</td>' +
               '<td>' + esc(r.user_agent || "") + '<div class="muted">' + esc(bodyPreview) + '</div></td>' +
-              '<td><button class="btn dark json view-json-btn" data-idx="' + idx + '" type="button">查看 JSON</button></td>' +
+              '<td><button class="btn dark json view-json-btn" data-idx="' + idx + '" type="button">View JSON</button></td>' +
               '</tr>' +
               '<tr id="json-row-' + idx + '" class="json-row" style="display:none;"><td colspan="7"><div id="json-box-' + idx + '" class="json-box mono"></div></td></tr>';
           }).join("");
           bindLogJsonButtons();
         }
-        setMsg(logMsg, "日志已更新");
+        setMsg(logMsg, "Logs updated");
       } catch (err) {
-        setMsg(logMsg, err.message || "日志获取失败", true);
+        setMsg(logMsg, err.message || "Failed to fetch logs", true);
       }
     }
 
@@ -1162,7 +1181,7 @@ function renderConsolePage() {
           const isOpen = row.style.display !== "none";
           if (isOpen) {
             row.style.display = "none";
-            btn.textContent = "查看 JSON";
+            btn.textContent = "View JSON";
             return;
           }
           const item = webhookRowsCache[idx] || {};
@@ -1185,7 +1204,7 @@ function renderConsolePage() {
           };
           box.textContent = JSON.stringify(merged, null, 2);
           row.style.display = "";
-          btn.textContent = "收起 JSON";
+          btn.textContent = "Hide JSON";
         });
       });
     }
@@ -1199,20 +1218,20 @@ function renderConsolePage() {
       const value = document.getElementById("addValue").value.trim();
       const interval = Number(document.getElementById("addInterval").value);
       if (!tag || !value || !Number.isFinite(interval) || interval <= 0) {
-        setMsg(ruleMsg, "新增参数不完整", true);
+        setMsg(ruleMsg, "Missing add-rule parameters", true);
         return;
       }
-      setMsg(ruleMsg, "添加中...");
+      setMsg(ruleMsg, "Adding rule...");
       try {
         await api("/admin/api/rules", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ tag, value, interval_seconds: interval }),
         });
-        setMsg(ruleMsg, "添加成功");
+        setMsg(ruleMsg, "Rule added");
         await refreshRules();
       } catch (err) {
-        setMsg(ruleMsg, err.message || "添加失败", true);
+        setMsg(ruleMsg, err.message || "Failed to add rule", true);
       }
     });
 
@@ -1223,58 +1242,58 @@ function renderConsolePage() {
       const interval = Number(document.getElementById("updInterval").value);
       const effect = Number(document.getElementById("updEffect").value);
       if (!ruleId || !tag || !value || !Number.isFinite(interval) || interval <= 0 || (effect !== 0 && effect !== 1)) {
-        setMsg(ruleMsg, "更新参数不完整", true);
+        setMsg(ruleMsg, "Missing update-rule parameters", true);
         return;
       }
-      setMsg(ruleMsg, "更新中...");
+      setMsg(ruleMsg, "Updating rule...");
       try {
         await api("/admin/api/rules/" + encodeURIComponent(ruleId), {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ tag, value, interval_seconds: interval, is_effect: effect }),
         });
-        setMsg(ruleMsg, "更新成功");
+        setMsg(ruleMsg, "Rule updated");
         await refreshRules();
-        const shouldOpen = window.confirm("规则已更新。\n如需设置 webhook 地址，请前往官方控制台。\n现在跳转吗？");
+        const shouldOpen = window.confirm("Rule updated.\nTo configure webhook URL, open the official console.\nOpen now?");
         if (shouldOpen) {
           window.open("https://twitterapi.io/tweet-filter-rules", "_blank", "noopener,noreferrer");
         }
       } catch (err) {
-        setMsg(ruleMsg, err.message || "更新失败", true);
+        setMsg(ruleMsg, err.message || "Failed to update rule", true);
       }
     });
 
     document.getElementById("delRuleBtn").addEventListener("click", async () => {
       const ruleId = document.getElementById("delRuleId").value.trim();
       if (!ruleId) {
-        setMsg(ruleMsg, "请填写要删除的 rule_id", true);
+        setMsg(ruleMsg, "Please provide rule_id", true);
         return;
       }
-      setMsg(ruleMsg, "删除中...");
+      setMsg(ruleMsg, "Deleting rule...");
       try {
         await api("/admin/api/rules/" + encodeURIComponent(ruleId), { method: "DELETE" });
-        setMsg(ruleMsg, "删除成功");
+        setMsg(ruleMsg, "Rule deleted");
         await refreshRules();
       } catch (err) {
-        setMsg(ruleMsg, err.message || "删除失败", true);
+        setMsg(ruleMsg, err.message || "Failed to delete rule", true);
       }
     });
 
     document.getElementById("clearLogsBtn").addEventListener("click", async () => {
-      setMsg(logMsg, "清空中...");
+      setMsg(logMsg, "Clearing logs...");
       try {
         await api("/admin/api/webhook/logs", { method: "DELETE" });
-        setMsg(logMsg, "已清空");
+        setMsg(logMsg, "Logs cleared");
         await refreshWebhookLogs();
       } catch (err) {
-        setMsg(logMsg, err.message || "清空失败", true);
+        setMsg(logMsg, err.message || "Failed to clear logs", true);
       }
     });
 
     toggleManagerBtn.addEventListener("click", async () => {
       const willOpen = managerSection.hidden;
       managerSection.hidden = !willOpen ? true : false;
-      toggleManagerBtn.textContent = willOpen ? "收起 Webhook 管理" : "进入 Webhook 管理";
+      toggleManagerBtn.textContent = willOpen ? "Collapse Webhook Manager" : "Open Webhook Manager";
       if (willOpen) {
         await refreshRules();
         await refreshWebhookLogs();
@@ -1286,9 +1305,9 @@ function renderConsolePage() {
     document.getElementById("copyWebhookBtn").addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(webhookUrl);
-        setMsg(logMsg, "Webhook URL 已复制");
+        setMsg(logMsg, "Webhook URL copied");
       } catch {
-        setMsg(logMsg, "复制失败，请手动复制", true);
+        setMsg(logMsg, "Copy failed, please copy manually", true);
       }
     });
 
@@ -1367,25 +1386,25 @@ function renderDocsPage() {
 <body>
   <div class="wrap">
     <div class="top">
-      <h1>规则文档</h1>
-      <a class="btn" href="/admin">返回控制台</a>
+      <h1>Rule Docs</h1>
+      <a class="btn" href="/admin">Back to Console</a>
     </div>
 
     <section class="panel">
-      <h2>目标</h2>
-      <p class="muted">任何人评论（回复）你的帖子时，触发你的 webhook（你配置的 twitterapi.io webhook，指向本 Worker 的 <code>/cf-webhook</code>）。</p>
-      <p class="muted">把下面示例里的 <code>your_x_username</code> 替换成你的 X 用户名（不带 @）。</p>
-      <p class="muted">官方 webhook 控制台: <a href="https://twitterapi.io/tweet-filter-rules" target="_blank" rel="noopener noreferrer" style="color:#93c5fd;">https://twitterapi.io/tweet-filter-rules</a></p>
+      <h2>Goal</h2>
+      <p class="muted">When anyone replies to your posts, trigger your webhook (configured in twitterapi.io, pointing to this Worker's <code>/cf-webhook</code>).</p>
+      <p class="muted">Replace <code>your_x_username</code> in examples below with your own X username (without @).</p>
+      <p class="muted">Official webhook console: <a href="https://twitterapi.io/tweet-filter-rules" target="_blank" rel="noopener noreferrer" style="color:#93c5fd;">https://twitterapi.io/tweet-filter-rules</a></p>
     </section>
 
     <section class="panel">
-      <h2>新增规则示例（Add）</h2>
+      <h2>Add Rule Example</h2>
       <pre>{
   "tag": "reply_to_me",
   "value": "to:your_x_username is:reply -from:your_x_username",
   "interval_seconds": 300
 }</pre>
-      <p class="muted">如果 <code>is:reply</code> 在你的数据源下不稳定，可改为：</p>
+      <p class="muted">If <code>is:reply</code> is unstable in your data source, use this fallback:</p>
       <pre>{
   "tag": "reply_to_me_fallback",
   "value": "to:your_x_username -from:your_x_username",
@@ -1394,9 +1413,9 @@ function renderDocsPage() {
     </section>
 
     <section class="panel">
-      <h2>更新规则示例（Update）</h2>
+      <h2>Update Rule Example</h2>
       <pre>{
-  "rule_id": "你的规则ID",
+  "rule_id": "your_rule_id",
   "tag": "reply_to_me_v2",
   "value": "to:your_x_username is:reply -from:your_x_username",
   "interval_seconds": 300,
@@ -1405,14 +1424,14 @@ function renderDocsPage() {
     </section>
 
     <section class="panel">
-      <h2>面板字段对应</h2>
-      <pre>新增规则:
+      <h2>Field Mapping</h2>
+      <pre>Add Rule:
 tag               -> reply_to_me
 value             -> to:your_x_username is:reply -from:your_x_username
 interval_seconds  -> 300
 
-更新规则:
-rule_id           -> 你的规则ID
+Update Rule:
+rule_id           -> your_rule_id
 tag               -> reply_to_me_v2
 value             -> to:your_x_username is:reply -from:your_x_username
 interval_seconds  -> 300
@@ -1463,11 +1482,11 @@ async function handleAdminConsole(request, env, url) {
 	if (pathname === "/admin/login" && request.method === "POST") {
 		const expectedPwd = getAdminConsolePassword(env);
 		if (!expectedPwd) {
-			return htmlResponse(renderLoginPage("服务端未配置 ADMIN_CONSOLE_PWD"), 500);
+			return htmlResponse(renderLoginPage("ADMIN_CONSOLE_PWD is not configured on server"), 500);
 		}
 		const inputPwd = await parsePasswordFromRequest(request);
 		if (!timingSafeEqual(inputPwd, expectedPwd)) {
-			return htmlResponse(renderLoginPage("密码错误，请重试"), 401);
+			return htmlResponse(renderLoginPage("Incorrect password, please try again"), 401);
 		}
 		const token = await createConsoleSessionToken(env);
 		return new Response(null, {
