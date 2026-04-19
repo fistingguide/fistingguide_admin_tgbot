@@ -359,6 +359,10 @@ function getNotifyChatId(env) {
 	return String(env.FGADMIN_NOTIFY_CHAT_ID || env.TG_NOTIFY_CHAT_ID || env.DATABOT_CHAT_ID || "").trim();
 }
 
+function getWebhookSecret(env) {
+	return String(env.WEBHOOK_SECRET || env.CF_WEBHOOK_SECRET || "").trim();
+}
+
 async function ensureReplyEventSchema(env) {
 	if (!env.DB) {
 		throw new Error("Missing D1 binding: DB");
@@ -378,7 +382,15 @@ async function ensureReplyEventSchema(env) {
 	if (!cols.has("isverified")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN isVerified INTEGER NOT NULL DEFAULT 0");
 	if (!cols.has("name")) alterSqls.push("ALTER TABLE admin_reply_events ADD COLUMN name TEXT NOT NULL DEFAULT ''");
 	for (const sql of alterSqls) {
-		await env.DB.prepare(sql).run();
+		try {
+			await env.DB.prepare(sql).run();
+		} catch (err) {
+			const msg = String(err?.message || err).toLowerCase();
+			if (msg.includes("duplicate column name") || msg.includes("already exists")) {
+				continue;
+			}
+			throw err;
+		}
 	}
 }
 
@@ -1673,6 +1685,14 @@ async function handleAdminConsole(request, env, url) {
 }
 
 async function handleCloudflareWebhook(request, env, url) {
+	const expectedSecret = getWebhookSecret(env);
+	if (expectedSecret) {
+		const providedSecret = String(request.headers.get("x-webhook-secret") || url.searchParams.get("secret") || "").trim();
+		if (!providedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
+			return jsonResponse({ ok: false, error: "Unauthorized webhook" }, 401);
+		}
+	}
+
 	const bodyText = await request.text().catch(() => "");
 	let payload = null;
 	try {
