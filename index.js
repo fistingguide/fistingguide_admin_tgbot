@@ -135,6 +135,467 @@ function getProfilesTable(env) {
 	return table;
 }
 
+const ADMIN_CONSOLE_COOKIE = "admin_console_session";
+const ADMIN_SESSION_TTL_SECONDS = 8 * 60 * 60;
+
+function getAdminConsolePassword(env) {
+	return String(env.ADMIN_CONSOLE_PWD || "").trim();
+}
+
+function getAdminConsoleSecret(env) {
+	return String(env.ADMIN_CONSOLE_SECRET || env.ADMIN_CONSOLE_PWD || "").trim();
+}
+
+function getScreenshotApiKey(env) {
+	return String(env.SCREENSHOT_API_KEY || env.SCREENSHOT_KEY || "").trim();
+}
+
+function getScreenshotApiBase(env) {
+	const fallback = "https://shot.screenshotapi.net/screenshot";
+	return String(env.SCREENSHOT_API_BASE || fallback).trim();
+}
+
+function timingSafeEqual(a, b) {
+	if (a.length !== b.length) return false;
+	let out = 0;
+	for (let i = 0; i < a.length; i += 1) {
+		out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return out === 0;
+}
+
+function bytesToBase64Url(bytes) {
+	let binary = "";
+	for (const b of bytes) {
+		binary += String.fromCharCode(b);
+	}
+	return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+async function signHmac(secret, message) {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(secret),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"]
+	);
+	const sigBuffer = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+	return bytesToBase64Url(new Uint8Array(sigBuffer));
+}
+
+function parseCookies(cookieHeader) {
+	const out = {};
+	for (const part of String(cookieHeader || "").split(";")) {
+		const idx = part.indexOf("=");
+		if (idx === -1) continue;
+		const key = part.slice(0, idx).trim();
+		const value = part.slice(idx + 1).trim();
+		if (!key) continue;
+		out[key] = value;
+	}
+	return out;
+}
+
+async function createConsoleSessionToken(env) {
+	const secret = getAdminConsoleSecret(env);
+	if (!secret) {
+		throw new Error("Missing ADMIN_CONSOLE_SECRET/ADMIN_CONSOLE_PWD in Worker env");
+	}
+	const issuedAt = Date.now();
+	const nonce = crypto.randomUUID();
+	const payload = `${issuedAt}:${nonce}`;
+	const sig = await signHmac(secret, payload);
+	return `${payload}.${sig}`;
+}
+
+async function verifyConsoleSessionToken(env, token) {
+	const secret = getAdminConsoleSecret(env);
+	if (!secret || !token) return false;
+	const raw = String(token);
+	const split = raw.lastIndexOf(".");
+	if (split <= 0) return false;
+	const payload = raw.slice(0, split);
+	const signature = raw.slice(split + 1);
+	const payloadParts = payload.split(":");
+	if (payloadParts.length !== 2) return false;
+	const issuedAt = Number.parseInt(payloadParts[0], 10);
+	if (!Number.isFinite(issuedAt)) return false;
+	const ageMs = Date.now() - issuedAt;
+	if (ageMs < 0 || ageMs > ADMIN_SESSION_TTL_SECONDS * 1000) return false;
+	const expectedSig = await signHmac(secret, payload);
+	return timingSafeEqual(signature, expectedSig);
+}
+
+function htmlResponse(html, status = 200, headers = {}) {
+	return new Response(html, {
+		status,
+		headers: {
+			"content-type": "text/html; charset=utf-8",
+			"cache-control": "no-store",
+			"x-frame-options": "DENY",
+			...headers,
+		},
+	});
+}
+
+function jsonResponse(data, status = 200, headers = {}) {
+	return new Response(JSON.stringify(data), {
+		status,
+		headers: {
+			"content-type": "application/json; charset=utf-8",
+			"cache-control": "no-store",
+			...headers,
+		},
+	});
+}
+
+function renderLoginPage(errorMsg = "") {
+	const errorBlock = errorMsg ? `<p class="err">${escapeHtml(errorMsg)}</p>` : "";
+	return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Console Login</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #0d2335 0%, #05070c 58%, #020307 100%);
+      color: #dbeafe;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .card {
+      width: min(420px, calc(100vw - 32px));
+      padding: 24px;
+      border: 1px solid rgba(34, 211, 238, 0.28);
+      border-radius: 18px;
+      background: rgba(5, 15, 28, 0.76);
+      box-shadow: 0 20px 80px rgba(2, 132, 199, 0.25);
+    }
+    h1 { margin: 0 0 10px; font-size: 24px; color: #67e8f9; }
+    p { margin: 0 0 12px; color: #93c5fd; font-size: 14px; }
+    .err { color: #fca5a5; margin-bottom: 14px; }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      height: 42px;
+      border-radius: 10px;
+      border: 1px solid #1d4ed8;
+      background: #0b1222;
+      color: #e2e8f0;
+      padding: 0 12px;
+      font-size: 15px;
+      outline: none;
+    }
+    input:focus { border-color: #22d3ee; box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.2); }
+    button {
+      margin-top: 12px;
+      width: 100%;
+      height: 42px;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      color: #00131f;
+      background: linear-gradient(135deg, #22d3ee 0%, #38bdf8 55%, #60a5fa 100%);
+    }
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="/admin/login">
+    <h1>Admin Console</h1>
+    <p>请输入控制台密码</p>
+    ${errorBlock}
+    <input type="password" name="password" autocomplete="current-password" required />
+    <button type="submit">登录</button>
+  </form>
+</body>
+</html>`;
+}
+
+function renderConsolePage() {
+	return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Console</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0) 45%),
+        radial-gradient(circle at 80% 10%, rgba(14, 165, 233, 0.2) 0%, rgba(14, 165, 233, 0) 38%),
+        #030712;
+      color: #e2e8f0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .wrap {
+      width: min(980px, calc(100vw - 28px));
+      margin: 24px auto 38px;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    h1 { margin: 0; color: #34d399; font-size: 28px; }
+    .logout {
+      border: 1px solid rgba(248, 113, 113, 0.5);
+      color: #fca5a5;
+      background: rgba(127, 29, 29, 0.22);
+      border-radius: 10px;
+      height: 38px;
+      padding: 0 14px;
+      cursor: pointer;
+    }
+    .panel {
+      border: 1px solid rgba(45, 212, 191, 0.25);
+      background: rgba(6, 16, 30, 0.8);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 15px 50px rgba(5, 150, 105, 0.16);
+    }
+    label { display: block; margin: 8px 0 6px; color: #7dd3fc; font-size: 14px; }
+    input[type="url"] {
+      width: 100%;
+      box-sizing: border-box;
+      height: 42px;
+      border-radius: 10px;
+      border: 1px solid #0f766e;
+      background: #04111f;
+      color: #e2e8f0;
+      padding: 0 12px;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin: 12px 0;
+      align-items: center;
+    }
+    .btn {
+      height: 40px;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      padding: 0 16px;
+      color: #022c22;
+      background: linear-gradient(135deg, #34d399 0%, #22d3ee 100%);
+      font-weight: 600;
+    }
+    .msg { min-height: 22px; font-size: 14px; color: #93c5fd; }
+    .msg.err { color: #fca5a5; }
+    .image-wrap {
+      margin-top: 12px;
+      border: 1px solid rgba(14, 165, 233, 0.2);
+      border-radius: 12px;
+      padding: 8px;
+      background: rgba(2, 6, 23, 0.86);
+    }
+    .image-wrap img {
+      width: 100%;
+      display: block;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1>Worker 管理控制台</h1>
+      <form method="post" action="/admin/logout"><button class="logout" type="submit">退出登录</button></form>
+    </div>
+    <section class="panel">
+      <label for="url">目标网页 URL</label>
+      <input id="url" type="url" placeholder="https://example.com" required />
+      <div class="row">
+        <label><input id="fullPage" type="checkbox" checked /> Full Page</label>
+        <button class="btn" id="shotBtn" type="button">截图</button>
+      </div>
+      <div id="msg" class="msg"></div>
+      <div id="imgBox" class="image-wrap" hidden>
+        <img id="preview" alt="screenshot preview" />
+      </div>
+    </section>
+  </div>
+  <script>
+    const btn = document.getElementById("shotBtn");
+    const msg = document.getElementById("msg");
+    const urlInput = document.getElementById("url");
+    const fullPage = document.getElementById("fullPage");
+    const imgBox = document.getElementById("imgBox");
+    const preview = document.getElementById("preview");
+
+    function setMessage(text, isError = false) {
+      msg.textContent = text || "";
+      msg.className = isError ? "msg err" : "msg";
+    }
+
+    btn.addEventListener("click", async () => {
+      const url = (urlInput.value || "").trim();
+      if (!url) {
+        setMessage("请先输入 URL", true);
+        return;
+      }
+      setMessage("截图中...");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/admin/screenshot", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url, fullPage: fullPage.checked }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "截图失败");
+        }
+        preview.src = data.imageDataUrl;
+        imgBox.hidden = false;
+        setMessage("截图成功");
+      } catch (err) {
+        imgBox.hidden = true;
+        setMessage(err.message || "截图失败", true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function isJsonRequest(request) {
+	return String(request.headers.get("content-type") || "").toLowerCase().includes("application/json");
+}
+
+async function parsePasswordFromRequest(request) {
+	if (isJsonRequest(request)) {
+		const body = await request.json().catch(() => null);
+		return String(body?.password || "").trim();
+	}
+	const form = await request.formData().catch(() => null);
+	return String(form?.get("password") || "").trim();
+}
+
+async function isAdminConsoleAuthed(request, env) {
+	const cookieMap = parseCookies(request.headers.get("cookie") || "");
+	const token = cookieMap[ADMIN_CONSOLE_COOKIE];
+	return verifyConsoleSessionToken(env, token);
+}
+
+function buildSessionCookie(token, maxAge) {
+	return `${ADMIN_CONSOLE_COOKIE}=${token}; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+async function callScreenshotApi(env, targetUrl, fullPage) {
+	const apiKey = getScreenshotApiKey(env);
+	if (!apiKey) {
+		throw new Error("Missing SCREENSHOT_API_KEY/SCREENSHOT_KEY in Worker env");
+	}
+	const apiBase = getScreenshotApiBase(env);
+	const endpoint = new URL(apiBase);
+	endpoint.searchParams.set("token", apiKey);
+	endpoint.searchParams.set("url", targetUrl);
+	endpoint.searchParams.set("output", "image");
+	endpoint.searchParams.set("file_type", "png");
+	endpoint.searchParams.set("full_page", fullPage ? "true" : "false");
+	endpoint.searchParams.set("fresh", "true");
+	endpoint.searchParams.set("wait_for_event", "load");
+	const res = await fetch(endpoint.toString(), { method: "GET" });
+	if (!res.ok) {
+		const body = await res.text().catch(() => "");
+		throw new Error(`Screenshot API failed: ${res.status} ${body.slice(0, 240)}`);
+	}
+	const contentType = String(res.headers.get("content-type") || "image/png");
+	const buffer = await res.arrayBuffer();
+	let binary = "";
+	for (const b of new Uint8Array(buffer)) {
+		binary += String.fromCharCode(b);
+	}
+	return `data:${contentType};base64,${btoa(binary)}`;
+}
+
+async function handleAdminConsole(request, env, url) {
+	const pathname = url.pathname;
+
+	if (pathname === "/admin" && request.method === "GET") {
+		const authed = await isAdminConsoleAuthed(request, env);
+		return authed ? htmlResponse(renderConsolePage()) : htmlResponse(renderLoginPage());
+	}
+
+	if (pathname === "/admin/login" && request.method === "POST") {
+		const expectedPwd = getAdminConsolePassword(env);
+		if (!expectedPwd) {
+			return htmlResponse(renderLoginPage("服务端未配置 ADMIN_CONSOLE_PWD"), 500);
+		}
+		const inputPwd = await parsePasswordFromRequest(request);
+		if (!timingSafeEqual(inputPwd, expectedPwd)) {
+			return htmlResponse(renderLoginPage("密码错误，请重试"), 401);
+		}
+		const token = await createConsoleSessionToken(env);
+		return new Response(null, {
+			status: 302,
+			headers: {
+				location: "/admin",
+				"set-cookie": buildSessionCookie(token, ADMIN_SESSION_TTL_SECONDS),
+				"cache-control": "no-store",
+			},
+		});
+	}
+
+	if (pathname === "/admin/logout" && request.method === "POST") {
+		return new Response(null, {
+			status: 302,
+			headers: {
+				location: "/admin",
+				"set-cookie": buildSessionCookie("", 0),
+				"cache-control": "no-store",
+			},
+		});
+	}
+
+	if (pathname === "/admin/screenshot" && request.method === "POST") {
+		const authed = await isAdminConsoleAuthed(request, env);
+		if (!authed) {
+			return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
+		}
+		const body = await request.json().catch(() => null);
+		const targetUrl = String(body?.url || "").trim();
+		const fullPage = Boolean(body?.fullPage);
+		if (!targetUrl) {
+			return jsonResponse({ ok: false, error: "url is required" }, 400);
+		}
+		let normalized;
+		try {
+			normalized = new URL(targetUrl);
+		} catch {
+			return jsonResponse({ ok: false, error: "Invalid URL" }, 400);
+		}
+		if (normalized.protocol !== "http:" && normalized.protocol !== "https:") {
+			return jsonResponse({ ok: false, error: "Only http/https are allowed" }, 400);
+		}
+		try {
+			const imageDataUrl = await callScreenshotApi(env, normalized.toString(), fullPage);
+			return jsonResponse({ ok: true, imageDataUrl });
+		} catch (err) {
+			return jsonResponse({ ok: false, error: String(err?.message || err) }, 500);
+		}
+	}
+
+	return new Response("Not found", { status: 404 });
+}
+
 function escapeHtml(value) {
 	return String(value ?? "")
 		.replaceAll("&", "&amp;")
@@ -1070,6 +1531,11 @@ async function handleMessage(env, message) {
 
 export default {
 	async fetch(request, env) {
+		const url = new URL(request.url);
+		if (url.pathname.startsWith("/admin")) {
+			return handleAdminConsole(request, env, url);
+		}
+
 		if (request.method !== "POST") {
 			return new Response("Not found", { status: 404 });
 		}
