@@ -1,4 +1,3 @@
-d1_databases = [
-  { binding = "DB", database_id = "d6f69b40-6768-431d-a2a4-2233aa802bc7", database_name = "japs" }
-]   这是我的D1数据库的信息，当点击任何一个按钮的时候，先提示用户输入X的句柄，格式为@xxx ， 就可以进行一些操作
-1. 选择查看信息的时候，开始搜索给定x句柄的那一列的相关信息，表的列名和每列的解释给在db.json。 实现第一个按钮的功能。
+https://fgadmintgbot.fistingguide.workers.dev/admin 的核心作用是
+1. 查看我的twitterapi.io的使用余额和剩余的余额
+2. 实现添加，获取，更新，删除webhook的功能

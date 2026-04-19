@@ -146,15 +146,6 @@ function getAdminConsoleSecret(env) {
 	return String(env.ADMIN_CONSOLE_SECRET || env.ADMIN_CONSOLE_PWD || "").trim();
 }
 
-function getScreenshotApiKey(env) {
-	return String(env.SCREENSHOT_API_KEY || env.SCREENSHOT_KEY || "").trim();
-}
-
-function getScreenshotApiBase(env) {
-	const fallback = "https://shot.screenshotapi.net/screenshot";
-	return String(env.SCREENSHOT_API_BASE || fallback).trim();
-}
-
 function timingSafeEqual(a, b) {
 	if (a.length !== b.length) return false;
 	let out = 0;
@@ -248,6 +239,52 @@ function jsonResponse(data, status = 200, headers = {}) {
 			...headers,
 		},
 	});
+}
+
+function getTwitterApiKey(env) {
+	return String(env.TWITTERAPI_IO_KEY || env.TWITTERAPI_KEY || env.X_API_KEY || "").trim();
+}
+
+async function callTwitterApi(env, method, path, body) {
+	const apiKey = getTwitterApiKey(env);
+	if (!apiKey) {
+		return { ok: false, status: 500, data: null, error: "Missing TWITTERAPI_IO_KEY/TWITTERAPI_KEY/X_API_KEY in Worker env" };
+	}
+
+	const url = new URL(path, "https://api.twitterapi.io");
+	const headers = { "X-API-Key": apiKey };
+	const options = { method, headers };
+	if (body !== undefined) {
+		headers["content-type"] = "application/json";
+		options.body = JSON.stringify(body);
+	}
+
+	let response;
+	try {
+		response = await fetch(url.toString(), options);
+	} catch (err) {
+		return { ok: false, status: 502, data: null, error: `Upstream request failed: ${String(err?.message || err)}` };
+	}
+
+	const text = await response.text().catch(() => "");
+	let payload = null;
+	if (text) {
+		try {
+			payload = JSON.parse(text);
+		} catch {
+			payload = { raw: text };
+		}
+	}
+
+	if (!response.ok) {
+		return { ok: false, status: response.status, data: payload, error: `Upstream error ${response.status}` };
+	}
+
+	if (payload && payload.status === "error") {
+		return { ok: false, status: 502, data: payload, error: String(payload.msg || payload.message || "twitterapi.io returned error") };
+	}
+
+	return { ok: true, status: response.status, data: payload, error: "" };
 }
 
 function renderLoginPage(errorMsg = "") {
@@ -365,9 +402,15 @@ function renderConsolePage() {
       border-radius: 16px;
       padding: 16px;
       box-shadow: 0 15px 50px rgba(5, 150, 105, 0.16);
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 12px;
+      color: #34d399;
+      font-size: 20px;
     }
     label { display: block; margin: 8px 0 6px; color: #7dd3fc; font-size: 14px; }
-    input[type="url"] {
+    input[type="text"], input[type="number"] {
       width: 100%;
       box-sizing: border-box;
       height: 42px;
@@ -394,19 +437,60 @@ function renderConsolePage() {
       background: linear-gradient(135deg, #34d399 0%, #22d3ee 100%);
       font-weight: 600;
     }
-    .msg { min-height: 22px; font-size: 14px; color: #93c5fd; }
-    .msg.err { color: #fca5a5; }
-    .image-wrap {
-      margin-top: 12px;
-      border: 1px solid rgba(14, 165, 233, 0.2);
-      border-radius: 12px;
-      padding: 8px;
-      background: rgba(2, 6, 23, 0.86);
+    .btn.secondary {
+      color: #dbeafe;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      border: 1px solid #334155;
     }
-    .image-wrap img {
+    .msg { min-height: 22px; font-size: 14px; color: #93c5fd; white-space: pre-wrap; }
+    .msg.err { color: #fca5a5; }
+    .kv {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      border: 1px solid rgba(125, 211, 252, 0.2);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(2, 6, 23, 0.55);
+    }
+    .label {
+      font-size: 12px;
+      color: #93c5fd;
+      margin-bottom: 4px;
+    }
+    .value {
+      font-size: 22px;
+      color: #e2e8f0;
+      font-weight: 700;
+      word-break: break-all;
+    }
+    table {
       width: 100%;
-      display: block;
-      border-radius: 8px;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    th, td {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      padding: 8px 6px;
+      text-align: left;
+      vertical-align: top;
+      word-break: break-all;
+    }
+    th { color: #7dd3fc; }
+    .muted {
+      color: #94a3b8;
+      font-size: 12px;
+    }
+    pre {
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+      overflow: auto;
+      font-size: 12px;
     }
   </style>
 </head>
@@ -417,59 +501,211 @@ function renderConsolePage() {
       <form method="post" action="/admin/logout"><button class="logout" type="submit">退出登录</button></form>
     </div>
     <section class="panel">
-      <label for="url">目标网页 URL</label>
-      <input id="url" type="url" placeholder="https://example.com" required />
+      <h2>1. TwitterAPI 余额</h2>
       <div class="row">
-        <label><input id="fullPage" type="checkbox" checked /> Full Page</label>
-        <button class="btn" id="shotBtn" type="button">截图</button>
+        <button id="refreshBalance" class="btn" type="button">刷新余额</button>
       </div>
-      <div id="msg" class="msg"></div>
-      <div id="imgBox" class="image-wrap" hidden>
-        <img id="preview" alt="screenshot preview" />
+      <div class="kv">
+        <div class="card">
+          <div class="label">剩余余额 / Remaining</div>
+          <div class="value" id="remainingValue">-</div>
+        </div>
+        <div class="card">
+          <div class="label">已使用 / Used</div>
+          <div class="value" id="usedValue">-</div>
+        </div>
       </div>
+      <p class="muted">数据来自 <code>GET /oapi/my/info</code></p>
+      <pre id="balanceRaw">{}</pre>
+      <div id="balanceMsg" class="msg"></div>
+    </section>
+    <section class="panel">
+      <h2>2. Webhook/Websocket Tweet Filter Rule 管理</h2>
+      <div class="row">
+        <button id="refreshRules" class="btn" type="button">获取全部规则</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>rule_id</th>
+            <th>tag</th>
+            <th>value</th>
+            <th>interval_seconds</th>
+            <th>is_effect</th>
+          </tr>
+        </thead>
+        <tbody id="rulesTableBody"><tr><td colspan="5" class="muted">暂无数据</td></tr></tbody>
+      </table>
+      <div id="ruleMsg" class="msg"></div>
+      <hr style="border-color: rgba(148, 163, 184, 0.2); margin: 16px 0;" />
+      <h3 style="margin: 0 0 6px; color: #a7f3d0;">新增规则</h3>
+      <label>tag</label><input id="addTag" type="text" placeholder="myhook" />
+      <label>value</label><input id="addValue" type="text" placeholder="from:elonmusk" />
+      <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="60" />
+      <div class="row"><button id="addRuleBtn" class="btn" type="button">添加</button></div>
+      <h3 style="margin: 14px 0 6px; color: #a7f3d0;">更新规则</h3>
+      <label>rule_id</label><input id="updRuleId" type="text" placeholder="输入要更新的 rule_id" />
+      <label>tag</label><input id="updTag" type="text" placeholder="updated-tag" />
+      <label>value</label><input id="updValue" type="text" placeholder="keyword OR from:xxx" />
+      <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="60" />
+      <label>is_effect (1=启用, 0=禁用)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
+      <div class="row"><button id="updRuleBtn" class="btn secondary" type="button">更新</button></div>
+      <h3 style="margin: 14px 0 6px; color: #fca5a5;">删除规则</h3>
+      <label>rule_id</label><input id="delRuleId" type="text" placeholder="输入要删除的 rule_id" />
+      <div class="row"><button id="delRuleBtn" class="btn secondary" type="button">删除</button></div>
     </section>
   </div>
   <script>
-    const btn = document.getElementById("shotBtn");
-    const msg = document.getElementById("msg");
-    const urlInput = document.getElementById("url");
-    const fullPage = document.getElementById("fullPage");
-    const imgBox = document.getElementById("imgBox");
-    const preview = document.getElementById("preview");
+    const balanceMsg = document.getElementById("balanceMsg");
+    const ruleMsg = document.getElementById("ruleMsg");
+    const remainingValue = document.getElementById("remainingValue");
+    const usedValue = document.getElementById("usedValue");
+    const balanceRaw = document.getElementById("balanceRaw");
+    const rulesBody = document.getElementById("rulesTableBody");
 
-    function setMessage(text, isError = false) {
-      msg.textContent = text || "";
-      msg.className = isError ? "msg err" : "msg";
+    function setMsg(el, text, isError = false) {
+      el.textContent = text || "";
+      el.className = isError ? "msg err" : "msg";
     }
 
-    btn.addEventListener("click", async () => {
-      const url = (urlInput.value || "").trim();
-      if (!url) {
-        setMessage("请先输入 URL", true);
+    async function api(path, options) {
+      const res = await fetch(path, options || {});
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || ("HTTP " + res.status));
+      }
+      return data;
+    }
+
+    function numOrDash(v) {
+      if (v === null || v === undefined || v === "") return "-";
+      const n = Number(v);
+      return Number.isFinite(n) ? String(n) : String(v);
+    }
+
+    async function refreshBalance() {
+      setMsg(balanceMsg, "加载余额中...");
+      try {
+        const res = await api("/admin/api/balance");
+        const d = res.data || {};
+        const remaining = d.recharge_credits ?? d.remaining_credits ?? d.balance ?? d.credits ?? null;
+        let used = d.used_credits ?? d.total_used_credits ?? null;
+        if (used === null && d.total_credits !== undefined && remaining !== null) {
+          const total = Number(d.total_credits);
+          const rem = Number(remaining);
+          if (Number.isFinite(total) && Number.isFinite(rem)) used = total - rem;
+        }
+        remainingValue.textContent = numOrDash(remaining);
+        usedValue.textContent = numOrDash(used);
+        balanceRaw.textContent = JSON.stringify(d, null, 2);
+        setMsg(balanceMsg, "余额已更新");
+      } catch (err) {
+        setMsg(balanceMsg, err.message || "余额查询失败", true);
+      }
+    }
+
+    function renderRules(list) {
+      const arr = Array.isArray(list) ? list : [];
+      if (arr.length === 0) {
+        rulesBody.innerHTML = '<tr><td colspan="5" class="muted">暂无数据</td></tr>';
         return;
       }
-      setMessage("截图中...");
-      btn.disabled = true;
+      const esc = (v) => String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      rulesBody.innerHTML = arr.map((r) => {
+        const id = r.rule_id ?? r.id ?? "";
+        const tag = r.tag ?? "";
+        const value = r.value ?? "";
+        const interval = r.interval_seconds ?? "";
+        const effect = r.is_effect ?? "";
+        return '<tr>' +
+          '<td>' + esc(id) + '</td>' +
+          '<td>' + esc(tag) + '</td>' +
+          '<td>' + esc(value) + '</td>' +
+          '<td>' + esc(interval) + '</td>' +
+          '<td>' + esc(effect) + '</td>' +
+          '</tr>';
+      }).join("");
+    }
+
+    async function refreshRules() {
+      setMsg(ruleMsg, "获取规则中...");
       try {
-        const res = await fetch("/admin/screenshot", {
+        const res = await api("/admin/api/rules");
+        const list = res.rules || res.data || [];
+        renderRules(list);
+        setMsg(ruleMsg, "规则已更新");
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "获取规则失败", true);
+      }
+    }
+
+    document.getElementById("refreshBalance").addEventListener("click", refreshBalance);
+    document.getElementById("refreshRules").addEventListener("click", refreshRules);
+
+    document.getElementById("addRuleBtn").addEventListener("click", async () => {
+      const tag = document.getElementById("addTag").value.trim();
+      const value = document.getElementById("addValue").value.trim();
+      const interval = Number(document.getElementById("addInterval").value);
+      if (!tag || !value || !Number.isFinite(interval) || interval <= 0) {
+        setMsg(ruleMsg, "新增参数不完整", true);
+        return;
+      }
+      setMsg(ruleMsg, "添加中...");
+      try {
+        await api("/admin/api/rules", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url, fullPage: fullPage.checked }),
+          body: JSON.stringify({ tag, value, interval_seconds: interval }),
         });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          throw new Error(data.error || "截图失败");
-        }
-        preview.src = data.imageDataUrl;
-        imgBox.hidden = false;
-        setMessage("截图成功");
+        setMsg(ruleMsg, "添加成功");
+        await refreshRules();
       } catch (err) {
-        imgBox.hidden = true;
-        setMessage(err.message || "截图失败", true);
-      } finally {
-        btn.disabled = false;
+        setMsg(ruleMsg, err.message || "添加失败", true);
       }
     });
+
+    document.getElementById("updRuleBtn").addEventListener("click", async () => {
+      const ruleId = document.getElementById("updRuleId").value.trim();
+      const tag = document.getElementById("updTag").value.trim();
+      const value = document.getElementById("updValue").value.trim();
+      const interval = Number(document.getElementById("updInterval").value);
+      const effect = Number(document.getElementById("updEffect").value);
+      if (!ruleId || !tag || !value || !Number.isFinite(interval) || interval <= 0 || (effect !== 0 && effect !== 1)) {
+        setMsg(ruleMsg, "更新参数不完整", true);
+        return;
+      }
+      setMsg(ruleMsg, "更新中...");
+      try {
+        await api("/admin/api/rules/" + encodeURIComponent(ruleId), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tag, value, interval_seconds: interval, is_effect: effect }),
+        });
+        setMsg(ruleMsg, "更新成功");
+        await refreshRules();
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "更新失败", true);
+      }
+    });
+
+    document.getElementById("delRuleBtn").addEventListener("click", async () => {
+      const ruleId = document.getElementById("delRuleId").value.trim();
+      if (!ruleId) {
+        setMsg(ruleMsg, "请填写要删除的 rule_id", true);
+        return;
+      }
+      setMsg(ruleMsg, "删除中...");
+      try {
+        await api("/admin/api/rules/" + encodeURIComponent(ruleId), { method: "DELETE" });
+        setMsg(ruleMsg, "删除成功");
+        await refreshRules();
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "删除失败", true);
+      }
+    });
+
+    refreshBalance();
+    refreshRules();
   </script>
 </body>
 </html>`;
@@ -496,34 +732,6 @@ async function isAdminConsoleAuthed(request, env) {
 
 function buildSessionCookie(token, maxAge) {
 	return `${ADMIN_CONSOLE_COOKIE}=${token}; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
-}
-
-async function callScreenshotApi(env, targetUrl, fullPage) {
-	const apiKey = getScreenshotApiKey(env);
-	if (!apiKey) {
-		throw new Error("Missing SCREENSHOT_API_KEY/SCREENSHOT_KEY in Worker env");
-	}
-	const apiBase = getScreenshotApiBase(env);
-	const endpoint = new URL(apiBase);
-	endpoint.searchParams.set("token", apiKey);
-	endpoint.searchParams.set("url", targetUrl);
-	endpoint.searchParams.set("output", "image");
-	endpoint.searchParams.set("file_type", "png");
-	endpoint.searchParams.set("full_page", fullPage ? "true" : "false");
-	endpoint.searchParams.set("fresh", "true");
-	endpoint.searchParams.set("wait_for_event", "load");
-	const res = await fetch(endpoint.toString(), { method: "GET" });
-	if (!res.ok) {
-		const body = await res.text().catch(() => "");
-		throw new Error(`Screenshot API failed: ${res.status} ${body.slice(0, 240)}`);
-	}
-	const contentType = String(res.headers.get("content-type") || "image/png");
-	const buffer = await res.arrayBuffer();
-	let binary = "";
-	for (const b of new Uint8Array(buffer)) {
-		binary += String.fromCharCode(b);
-	}
-	return `data:${contentType};base64,${btoa(binary)}`;
 }
 
 async function handleAdminConsole(request, env, url) {
@@ -565,32 +773,125 @@ async function handleAdminConsole(request, env, url) {
 		});
 	}
 
-	if (pathname === "/admin/screenshot" && request.method === "POST") {
+	if (pathname.startsWith("/admin/api/")) {
 		const authed = await isAdminConsoleAuthed(request, env);
 		if (!authed) {
 			return jsonResponse({ ok: false, error: "Unauthorized" }, 401);
 		}
-		const body = await request.json().catch(() => null);
-		const targetUrl = String(body?.url || "").trim();
-		const fullPage = Boolean(body?.fullPage);
-		if (!targetUrl) {
-			return jsonResponse({ ok: false, error: "url is required" }, 400);
+
+		if (pathname === "/admin/api/balance" && request.method === "GET") {
+			const upstream = await callTwitterApi(env, "GET", "/oapi/my/info");
+			if (!upstream.ok) {
+				return jsonResponse(
+					{
+						ok: false,
+						error: upstream.error,
+						upstream_status: upstream.status,
+						data: upstream.data,
+					},
+					500
+				);
+			}
+			return jsonResponse({ ok: true, data: upstream.data });
 		}
-		let normalized;
-		try {
-			normalized = new URL(targetUrl);
-		} catch {
-			return jsonResponse({ ok: false, error: "Invalid URL" }, 400);
+
+		if (pathname === "/admin/api/rules" && request.method === "GET") {
+			const upstream = await callTwitterApi(env, "GET", "/oapi/tweet_filter/get_rules");
+			if (!upstream.ok) {
+				return jsonResponse(
+					{
+						ok: false,
+						error: upstream.error,
+						upstream_status: upstream.status,
+						data: upstream.data,
+					},
+					500
+				);
+			}
+			const rules = Array.isArray(upstream.data?.rules) ? upstream.data.rules : [];
+			return jsonResponse({ ok: true, rules, data: upstream.data });
 		}
-		if (normalized.protocol !== "http:" && normalized.protocol !== "https:") {
-			return jsonResponse({ ok: false, error: "Only http/https are allowed" }, 400);
+
+		if (pathname === "/admin/api/rules" && request.method === "POST") {
+			const body = await request.json().catch(() => null);
+			const tag = String(body?.tag || "").trim();
+			const value = String(body?.value || "").trim();
+			const intervalSeconds = Number(body?.interval_seconds);
+			if (!tag || !value || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+				return jsonResponse({ ok: false, error: "Invalid body: require tag, value, interval_seconds>0" }, 400);
+			}
+			const upstream = await callTwitterApi(env, "POST", "/oapi/tweet_filter/add_rule", {
+				tag,
+				value,
+				interval_seconds: intervalSeconds,
+			});
+			if (!upstream.ok) {
+				return jsonResponse(
+					{
+						ok: false,
+						error: upstream.error,
+						upstream_status: upstream.status,
+						data: upstream.data,
+					},
+					500
+				);
+			}
+			return jsonResponse({ ok: true, data: upstream.data });
 		}
-		try {
-			const imageDataUrl = await callScreenshotApi(env, normalized.toString(), fullPage);
-			return jsonResponse({ ok: true, imageDataUrl });
-		} catch (err) {
-			return jsonResponse({ ok: false, error: String(err?.message || err) }, 500);
+
+		const ruleMatch = pathname.match(/^\/admin\/api\/rules\/([^/]+)$/);
+		if (ruleMatch && request.method === "PUT") {
+			const ruleId = decodeURIComponent(ruleMatch[1]);
+			const body = await request.json().catch(() => null);
+			const tag = String(body?.tag || "").trim();
+			const value = String(body?.value || "").trim();
+			const intervalSeconds = Number(body?.interval_seconds);
+			const isEffect = Number(body?.is_effect);
+			if (!ruleId || !tag || !value || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0 || (isEffect !== 0 && isEffect !== 1)) {
+				return jsonResponse({ ok: false, error: "Invalid body: require tag,value,interval_seconds>0,is_effect(0|1)" }, 400);
+			}
+			const upstream = await callTwitterApi(env, "POST", "/oapi/tweet_filter/update_rule", {
+				rule_id: ruleId,
+				tag,
+				value,
+				interval_seconds: intervalSeconds,
+				is_effect: isEffect,
+			});
+			if (!upstream.ok) {
+				return jsonResponse(
+					{
+						ok: false,
+						error: upstream.error,
+						upstream_status: upstream.status,
+						data: upstream.data,
+					},
+					500
+				);
+			}
+			return jsonResponse({ ok: true, data: upstream.data });
 		}
+
+		if (ruleMatch && request.method === "DELETE") {
+			const ruleId = decodeURIComponent(ruleMatch[1]);
+			if (!ruleId) {
+				return jsonResponse({ ok: false, error: "rule_id is required" }, 400);
+			}
+			const upstream = await callTwitterApi(env, "DELETE", "/oapi/tweet_filter/delete_rule", { rule_id: ruleId });
+			if (!upstream.ok) {
+				return jsonResponse(
+					{
+						ok: false,
+						error: upstream.error,
+						upstream_status: upstream.status,
+						data: upstream.data,
+					},
+					500
+				);
+			}
+			return jsonResponse({ ok: true, data: upstream.data });
+		}
+
+		return jsonResponse({ ok: false, error: "Not found" }, 404);
 	}
 
 	return new Response("Not found", { status: 404 });
