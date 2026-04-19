@@ -119,6 +119,7 @@ const PROFILE_SECTIONS = [
 
 let sessionSchemaPromise;
 let webhookLogSchemaPromise;
+let replyEventSchemaPromise;
 
 function getBotToken(env) {
 	const token = String(env.TG_BOT_TOKEN || env.CREDIT_TG_BOT_TOKEN || "").trim();
@@ -306,7 +307,7 @@ async function ensureWebhookLogSchema(env) {
 	await webhookLogSchemaPromise;
 }
 
-async function logWebhookAccess(env, request, url) {
+async function logWebhookAccess(env, request, url, bodyTextInput = "") {
 	await ensureWebhookLogSchema(env);
 	const headersObj = {};
 	for (const [k, v] of request.headers.entries()) {
@@ -318,7 +319,7 @@ async function logWebhookAccess(env, request, url) {
 		request.headers.get("x-real-ip") ||
 		"";
 	const userAgent = request.headers.get("user-agent") || "";
-	const bodyText = truncateText(await request.text().catch(() => ""), 4000);
+	const bodyText = truncateText(bodyTextInput, 4000);
 	await env.DB.prepare(
 		"INSERT INTO admin_webhook_logs (method, path, query, ip, user_agent, headers_json, body_text) VALUES (?, ?, ?, ?, ?, ?, ?)"
 	)
@@ -348,6 +349,127 @@ async function listWebhookLogs(env, limit = 100) {
 async function clearWebhookLogs(env) {
 	await ensureWebhookLogSchema(env);
 	await env.DB.prepare("DELETE FROM admin_webhook_logs").run();
+}
+
+function getDataBotToken(env) {
+	return String(env.DATABOT_BOT_TOKEN || env.DATABOT_TOKEN || env.DATA_BOT_TOKEN || "").trim();
+}
+
+function getDataBotChatId(env) {
+	return String(env.DATABOT_CHAT_ID || env.DATA_BOT_CHAT_ID || env.TG_NOTIFY_CHAT_ID || "").trim();
+}
+
+async function ensureReplyEventSchema(env) {
+	if (!env.DB) {
+		throw new Error("Missing D1 binding: DB");
+	}
+	if (!replyEventSchemaPromise) {
+		replyEventSchemaPromise = env.DB.prepare(
+			"CREATE TABLE IF NOT EXISTS admin_reply_events (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL DEFAULT (datetime('now')), event_timestamp INTEGER, event_type TEXT NOT NULL DEFAULT '', rule_id TEXT NOT NULL DEFAULT '', rule_tag TEXT NOT NULL DEFAULT '', rule_value TEXT NOT NULL DEFAULT '', tweet_id TEXT NOT NULL, tweet_text TEXT NOT NULL DEFAULT '', tweet_created_at TEXT NOT NULL DEFAULT '', is_reply INTEGER NOT NULL DEFAULT 0, in_reply_to_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '', tweet_url TEXT NOT NULL DEFAULT '', author_id TEXT NOT NULL DEFAULT '', author_username TEXT NOT NULL DEFAULT '', author_name TEXT NOT NULL DEFAULT '', raw_json TEXT NOT NULL DEFAULT '{}', UNIQUE(tweet_id))"
+		).run();
+	}
+	await replyEventSchemaPromise;
+}
+
+function extractReplyEventsFromWebhookPayload(payload) {
+	const root = payload && typeof payload === "object" ? payload : {};
+	const eventType = String(root.event_type || "");
+	const ruleId = String(root.rule_id || "");
+	const ruleTag = String(root.rule_tag || "");
+	const ruleValue = String(root.rule_value || "");
+	const eventTimestampNum = Number.parseInt(String(root.timestamp || ""), 10);
+	const eventTimestamp = Number.isFinite(eventTimestampNum) ? eventTimestampNum : null;
+	const tweets = Array.isArray(root.tweets) ? root.tweets : [];
+	const out = [];
+	for (const tw of tweets) {
+		const tweet = tw && typeof tw === "object" ? tw : {};
+		const tweetId = String(tweet.id || "").trim();
+		if (!tweetId) continue;
+		const isReply = Boolean(tweet.isReply) || Boolean(tweet.inReplyToId);
+		if (!isReply) continue;
+		const author = tweet.author && typeof tweet.author === "object" ? tweet.author : {};
+		out.push({
+			event_timestamp: eventTimestamp,
+			event_type: eventType,
+			rule_id: ruleId,
+			rule_tag: ruleTag,
+			rule_value: ruleValue,
+			tweet_id: tweetId,
+			tweet_text: String(tweet.text || ""),
+			tweet_created_at: String(tweet.createdAt || ""),
+			is_reply: isReply ? 1 : 0,
+			in_reply_to_id: String(tweet.inReplyToId || ""),
+			conversation_id: String(tweet.conversationId || ""),
+			tweet_url: String(tweet.url || tweet.twitterUrl || ""),
+			author_id: String(author.id || ""),
+			author_username: String(author.userName || ""),
+			author_name: String(author.name || ""),
+			raw_json: JSON.stringify(tweet),
+		});
+	}
+	return out;
+}
+
+async function insertReplyEventIfNew(env, event) {
+	await ensureReplyEventSchema(env);
+	const result = await env.DB.prepare(
+		"INSERT INTO admin_reply_events (event_timestamp, event_type, rule_id, rule_tag, rule_value, tweet_id, tweet_text, tweet_created_at, is_reply, in_reply_to_id, conversation_id, tweet_url, author_id, author_username, author_name, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tweet_id) DO NOTHING"
+	)
+		.bind(
+			event.event_timestamp,
+			event.event_type,
+			event.rule_id,
+			event.rule_tag,
+			event.rule_value,
+			event.tweet_id,
+			event.tweet_text,
+			event.tweet_created_at,
+			event.is_reply,
+			event.in_reply_to_id,
+			event.conversation_id,
+			event.tweet_url,
+			event.author_id,
+			event.author_username,
+			event.author_name,
+			event.raw_json
+		)
+		.run();
+	const changes = Number(result?.meta?.changes || 0);
+	return changes > 0;
+}
+
+async function tgWithToken(token, method, payload) {
+	const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(payload),
+	});
+	if (!res.ok) {
+		const body = await res.text().catch(() => "");
+		throw new Error(`Telegram API ${method} failed: ${res.status} ${body}`);
+	}
+}
+
+async function notifyDataBotReply(env, event) {
+	const token = getDataBotToken(env);
+	const chatId = getDataBotChatId(env);
+	if (!token || !chatId) return;
+	const text = [
+		"New Reply Received",
+		`Author: ${event.author_name || "-"} (@${event.author_username || "-"})`,
+		`Author ID: ${event.author_id || "-"}`,
+		`Tweet ID: ${event.tweet_id}`,
+		`Reply To: ${event.in_reply_to_id || "-"}`,
+		`Rule: ${event.rule_tag || "-"} (${event.rule_id || "-"})`,
+		`Text: ${event.tweet_text || ""}`,
+		`URL: ${event.tweet_url || "-"}`,
+		`Tweet CreatedAt: ${event.tweet_created_at || "-"}`,
+	].join("\n");
+	await tgWithToken(token, "sendMessage", {
+		chat_id: chatId,
+		text: text.slice(0, 3900),
+		disable_web_page_preview: true,
+	});
 }
 
 function renderLoginPage(errorMsg = "") {
@@ -1520,16 +1642,44 @@ async function handleAdminConsole(request, env, url) {
 }
 
 async function handleCloudflareWebhook(request, env, url) {
+	const bodyText = await request.text().catch(() => "");
+	let payload = null;
 	try {
-		await logWebhookAccess(env, request, url);
+		payload = bodyText ? JSON.parse(bodyText) : null;
+	} catch {
+		payload = null;
+	}
+
+	try {
+		await logWebhookAccess(env, request, url, bodyText);
 	} catch (err) {
 		console.error("Webhook log write failed:", err);
 	}
+
+	let insertedCount = 0;
+	if (payload && typeof payload === "object") {
+		const replyEvents = extractReplyEventsFromWebhookPayload(payload);
+		for (const ev of replyEvents) {
+			try {
+				const inserted = await insertReplyEventIfNew(env, ev);
+				if (inserted) {
+					insertedCount += 1;
+					await notifyDataBotReply(env, ev).catch((notifyErr) => {
+						console.error("DataBot notify failed:", notifyErr);
+					});
+				}
+			} catch (insertErr) {
+				console.error("Insert reply event failed:", insertErr);
+			}
+		}
+	}
+
 	return jsonResponse({
 		ok: true,
 		message: "Webhook received",
 		path: url.pathname,
 		method: request.method,
+		new_replies: insertedCount,
 		ts: new Date().toISOString(),
 	});
 }
