@@ -715,6 +715,7 @@ function renderConsolePage() {
       <div class="actions">
         <button id="refreshBalance" class="btn">Refresh Balance</button>
         <form method="post" action="/admin/logout" class="inline"><button class="btn ghost" type="submit">退出登录</button></form>
+        <a href="/admin/docs" class="btn dark" style="text-decoration:none;display:inline-flex;align-items:center;">文档</a>
       </div>
     </div>
 
@@ -1109,6 +1110,131 @@ function renderConsolePage() {
 </html>`;
 }
 
+function renderDocsPage() {
+	return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Webhook Rules Docs</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 14% 8%, rgba(34, 211, 238, 0.16) 0%, rgba(34, 211, 238, 0) 44%),
+        radial-gradient(circle at 88% 18%, rgba(59, 130, 246, 0.20) 0%, rgba(59, 130, 246, 0) 46%),
+        #071022;
+      color: #e2e8f0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .wrap { width: min(980px, calc(100vw - 28px)); margin: 24px auto 36px; }
+    .top {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    h1 { margin: 0; font-size: 32px; color: #e2e8f0; }
+    .btn {
+      border-radius: 10px;
+      border: 1px solid rgba(125, 211, 252, 0.42);
+      color: #dbeafe;
+      background: rgba(15, 23, 42, 0.85);
+      text-decoration: none;
+      padding: 10px 14px;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .panel {
+      border: 1px solid rgba(59, 130, 246, 0.26);
+      background: rgba(15, 23, 42, 0.86);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    h2 { margin: 0 0 10px; font-size: 20px; color: #34d399; }
+    .muted { color: #93c5fd; font-size: 13px; margin: 0 0 10px; }
+    pre {
+      margin: 8px 0 0;
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+      overflow: auto;
+      font-size: 13px;
+      color: #e2e8f0;
+    }
+    code {
+      color: #bfdbfe;
+      background: rgba(30, 41, 59, 0.7);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <h1>规则文档</h1>
+      <a class="btn" href="/admin">返回控制台</a>
+    </div>
+
+    <section class="panel">
+      <h2>目标</h2>
+      <p class="muted">任何人评论（回复）你的帖子时，触发你的 webhook（你配置的 twitterapi.io webhook，指向本 Worker 的 <code>/cf-webhook</code>）。</p>
+      <p class="muted">把下面示例里的 <code>your_x_username</code> 替换成你的 X 用户名（不带 @）。</p>
+    </section>
+
+    <section class="panel">
+      <h2>新增规则示例（Add）</h2>
+      <pre>{
+  "tag": "reply_to_me",
+  "value": "to:your_x_username is:reply -from:your_x_username",
+  "interval_seconds": 300
+}</pre>
+      <p class="muted">如果 <code>is:reply</code> 在你的数据源下不稳定，可改为：</p>
+      <pre>{
+  "tag": "reply_to_me_fallback",
+  "value": "to:your_x_username -from:your_x_username",
+  "interval_seconds": 300
+}</pre>
+    </section>
+
+    <section class="panel">
+      <h2>更新规则示例（Update）</h2>
+      <pre>{
+  "rule_id": "你的规则ID",
+  "tag": "reply_to_me_v2",
+  "value": "to:your_x_username is:reply -from:your_x_username",
+  "interval_seconds": 300,
+  "is_effect": 1
+}</pre>
+    </section>
+
+    <section class="panel">
+      <h2>面板字段对应</h2>
+      <pre>新增规则:
+tag               -> reply_to_me
+value             -> to:your_x_username is:reply -from:your_x_username
+interval_seconds  -> 300
+
+更新规则:
+rule_id           -> 你的规则ID
+tag               -> reply_to_me_v2
+value             -> to:your_x_username is:reply -from:your_x_username
+interval_seconds  -> 300
+is_effect         -> 1
+</pre>
+    </section>
+  </div>
+</body>
+</html>`;
+}
+
 function isJsonRequest(request) {
 	return String(request.headers.get("content-type") || "").toLowerCase().includes("application/json");
 }
@@ -1138,6 +1264,11 @@ async function handleAdminConsole(request, env, url) {
 	if (pathname === "/admin" && request.method === "GET") {
 		const authed = await isAdminConsoleAuthed(request, env);
 		return authed ? htmlResponse(renderConsolePage()) : htmlResponse(renderLoginPage());
+	}
+
+	if (pathname === "/admin/docs" && request.method === "GET") {
+		const authed = await isAdminConsoleAuthed(request, env);
+		return authed ? htmlResponse(renderDocsPage()) : htmlResponse(renderLoginPage());
 	}
 
 	if (pathname === "/admin/login" && request.method === "POST") {
