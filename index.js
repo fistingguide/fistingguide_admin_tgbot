@@ -1047,6 +1047,14 @@ function renderConsolePage() {
       return Number.isFinite(n) ? n : null;
     }
 
+    function firstDefined() {
+      for (let i = 0; i < arguments.length; i += 1) {
+        const v = arguments[i];
+        if (v !== null && v !== undefined) return v;
+      }
+      return null;
+    }
+
     function pct(remaining, total) {
       if (total <= 0) return 0;
       return Math.max(0, Math.min(100, (remaining / total) * 100));
@@ -1059,15 +1067,15 @@ function renderConsolePage() {
         const d = res.data || {};
 
         const nRecharge = toNum(d.recharge_credits);
-        const nBonus = toNum(d.total_bonus_credits ?? d.bonus_credits ?? d.remaining_bonus_credits);
-        const nDirectRemaining = toNum(d.remaining_credits ?? d.balance ?? d.credits);
+        const nBonus = toNum(firstDefined(d.total_bonus_credits, d.bonus_credits, d.remaining_bonus_credits));
+        const nDirectRemaining = toNum(firstDefined(d.remaining_credits, d.balance, d.credits));
         let nRem = nDirectRemaining;
         if (nRem === null && (nRecharge !== null || nBonus !== null)) {
           nRem = (nRecharge || 0) + (nBonus || 0);
         }
 
-        let total = d.total_credits ?? d.all_credits ?? d.granted_credits ?? null;
-        let used = d.used_credits ?? d.total_used_credits ?? null;
+        let total = firstDefined(d.total_credits, d.all_credits, d.granted_credits);
+        let used = firstDefined(d.used_credits, d.total_used_credits);
         const nUsedRecharge = toNum(d.used_recharge_credits);
         const nUsedBonus = toNum(d.used_bonus_credits);
         if (used === null && (nUsedRecharge !== null || nUsedBonus !== null)) {
@@ -1111,13 +1119,13 @@ function renderConsolePage() {
         rulesBody.innerHTML = '<tr><td colspan="5" class="muted">No data</td></tr>';
         return;
       }
-      const esc = (v) => String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       rulesBody.innerHTML = arr.map((r) => {
-        const id = r.rule_id ?? r.id ?? "";
-        const tag = r.tag ?? "";
-        const value = r.value ?? "";
-        const interval = r.interval_seconds ?? "";
-        const effect = r.is_effect ?? "";
+        const id = firstDefined(r.rule_id, r.id, "");
+        const tag = firstDefined(r.tag, "");
+        const value = firstDefined(r.value, "");
+        const interval = firstDefined(r.interval_seconds, "");
+        const effect = firstDefined(r.is_effect, "");
         return '<tr>' +
           '<td>' + esc(id) + '</td>' +
           '<td>' + esc(tag) + '</td>' +
@@ -1141,7 +1149,7 @@ function renderConsolePage() {
     }
 
     function esc(v) {
-      return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
     async function refreshWebhookLogs() {
