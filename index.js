@@ -804,7 +804,6 @@ function renderConsolePage() {
           <h3>新增规则（Add）</h3>
           <label>tag</label><input id="addTag" type="text" placeholder="myhook" />
           <label>value</label><input id="addValue" type="text" placeholder="from:elonmusk" />
-          <label>webhook_url</label><input id="addWebhookUrl" type="text" placeholder="https://your-domain/cf-webhook" />
           <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="300" />
           <div class="row"><button id="addRuleBtn" class="btn sm green" type="button">添加规则</button></div>
         </div>
@@ -813,7 +812,6 @@ function renderConsolePage() {
           <label>rule_id</label><input id="updRuleId" type="text" placeholder="输入要更新的 rule_id" />
           <label>tag</label><input id="updTag" type="text" placeholder="updated-tag" />
           <label>value</label><input id="updValue" type="text" placeholder="keyword OR from:xxx" />
-          <label>webhook_url</label><input id="updWebhookUrl" type="text" placeholder="https://your-domain/cf-webhook" />
           <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="300" />
           <label>is_effect (1=启用, 0=禁用)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
           <div class="row"><button id="updRuleBtn" class="btn sm dark" type="button">更新规则</button></div>
@@ -1077,9 +1075,8 @@ function renderConsolePage() {
     document.getElementById("addRuleBtn").addEventListener("click", async () => {
       const tag = document.getElementById("addTag").value.trim();
       const value = document.getElementById("addValue").value.trim();
-      const webhookUrl = document.getElementById("addWebhookUrl").value.trim();
       const interval = Number(document.getElementById("addInterval").value);
-      if (!tag || !value || !webhookUrl || !Number.isFinite(interval) || interval <= 0) {
+      if (!tag || !value || !Number.isFinite(interval) || interval <= 0) {
         setMsg(ruleMsg, "新增参数不完整", true);
         return;
       }
@@ -1088,7 +1085,7 @@ function renderConsolePage() {
         await api("/admin/api/rules", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tag, value, webhook_url: webhookUrl, interval_seconds: interval }),
+          body: JSON.stringify({ tag, value, interval_seconds: interval }),
         });
         setMsg(ruleMsg, "添加成功");
         await refreshRules();
@@ -1101,10 +1098,9 @@ function renderConsolePage() {
       const ruleId = document.getElementById("updRuleId").value.trim();
       const tag = document.getElementById("updTag").value.trim();
       const value = document.getElementById("updValue").value.trim();
-      const webhookUrl = document.getElementById("updWebhookUrl").value.trim();
       const interval = Number(document.getElementById("updInterval").value);
       const effect = Number(document.getElementById("updEffect").value);
-      if (!ruleId || !tag || !value || !webhookUrl || !Number.isFinite(interval) || interval <= 0 || (effect !== 0 && effect !== 1)) {
+      if (!ruleId || !tag || !value || !Number.isFinite(interval) || interval <= 0 || (effect !== 0 && effect !== 1)) {
         setMsg(ruleMsg, "更新参数不完整", true);
         return;
       }
@@ -1113,10 +1109,14 @@ function renderConsolePage() {
         await api("/admin/api/rules/" + encodeURIComponent(ruleId), {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tag, value, webhook_url: webhookUrl, interval_seconds: interval, is_effect: effect }),
+          body: JSON.stringify({ tag, value, interval_seconds: interval, is_effect: effect }),
         });
         setMsg(ruleMsg, "更新成功");
         await refreshRules();
+        const shouldOpen = window.confirm("规则已更新。\n如需设置 webhook 地址，请前往官方控制台。\n现在跳转吗？");
+        if (shouldOpen) {
+          window.open("https://twitterapi.io/tweet-filter-rules", "_blank", "noopener,noreferrer");
+        }
       } catch (err) {
         setMsg(ruleMsg, err.message || "更新失败", true);
       }
@@ -1161,10 +1161,6 @@ function renderConsolePage() {
 
     const webhookUrl = location.origin + "/cf-webhook";
     webhookUrlEl.textContent = webhookUrl;
-    const addWebhookInput = document.getElementById("addWebhookUrl");
-    const updWebhookInput = document.getElementById("updWebhookUrl");
-    if (addWebhookInput) addWebhookInput.value = webhookUrl;
-    if (updWebhookInput) updWebhookInput.value = webhookUrl;
     document.getElementById("copyWebhookBtn").addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(webhookUrl);
@@ -1265,14 +1261,12 @@ function renderDocsPage() {
       <pre>{
   "tag": "reply_to_me",
   "value": "to:your_x_username is:reply -from:your_x_username",
-  "webhook_url": "https://your-domain/cf-webhook",
   "interval_seconds": 300
 }</pre>
       <p class="muted">如果 <code>is:reply</code> 在你的数据源下不稳定，可改为：</p>
       <pre>{
   "tag": "reply_to_me_fallback",
   "value": "to:your_x_username -from:your_x_username",
-  "webhook_url": "https://your-domain/cf-webhook",
   "interval_seconds": 300
 }</pre>
     </section>
@@ -1283,7 +1277,6 @@ function renderDocsPage() {
   "rule_id": "你的规则ID",
   "tag": "reply_to_me_v2",
   "value": "to:your_x_username is:reply -from:your_x_username",
-  "webhook_url": "https://your-domain/cf-webhook",
   "interval_seconds": 300,
   "is_effect": 1
 }</pre>
@@ -1294,14 +1287,12 @@ function renderDocsPage() {
       <pre>新增规则:
 tag               -> reply_to_me
 value             -> to:your_x_username is:reply -from:your_x_username
-webhook_url       -> https://your-domain/cf-webhook
 interval_seconds  -> 300
 
 更新规则:
 rule_id           -> 你的规则ID
 tag               -> reply_to_me_v2
 value             -> to:your_x_username is:reply -from:your_x_username
-webhook_url       -> https://your-domain/cf-webhook
 interval_seconds  -> 300
 is_effect         -> 1
 </pre>
@@ -1432,23 +1423,13 @@ async function handleAdminConsole(request, env, url) {
 			const body = await request.json().catch(() => null);
 			const tag = String(body?.tag || "").trim();
 			const value = String(body?.value || "").trim();
-			const webhookUrl = String(body?.webhook_url || "").trim();
 			const intervalSeconds = Number(body?.interval_seconds);
-			if (!tag || !value || !webhookUrl || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
-				return jsonResponse({ ok: false, error: "Invalid body: require tag, value, webhook_url, interval_seconds>0" }, 400);
-			}
-			try {
-				const parsed = new URL(webhookUrl);
-				if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-					return jsonResponse({ ok: false, error: "Invalid webhook_url protocol" }, 400);
-				}
-			} catch {
-				return jsonResponse({ ok: false, error: "Invalid webhook_url format" }, 400);
+			if (!tag || !value || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+				return jsonResponse({ ok: false, error: "Invalid body: require tag, value, interval_seconds>0" }, 400);
 			}
 			const upstream = await callTwitterApi(env, "POST", "/oapi/tweet_filter/add_rule", {
 				tag,
 				value,
-				webhook_url: webhookUrl,
 				interval_seconds: intervalSeconds,
 			});
 			if (!upstream.ok) {
@@ -1471,25 +1452,15 @@ async function handleAdminConsole(request, env, url) {
 			const body = await request.json().catch(() => null);
 			const tag = String(body?.tag || "").trim();
 			const value = String(body?.value || "").trim();
-			const webhookUrl = String(body?.webhook_url || "").trim();
 			const intervalSeconds = Number(body?.interval_seconds);
 			const isEffect = Number(body?.is_effect);
-			if (!ruleId || !tag || !value || !webhookUrl || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0 || (isEffect !== 0 && isEffect !== 1)) {
-				return jsonResponse({ ok: false, error: "Invalid body: require tag,value,webhook_url,interval_seconds>0,is_effect(0|1)" }, 400);
-			}
-			try {
-				const parsed = new URL(webhookUrl);
-				if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-					return jsonResponse({ ok: false, error: "Invalid webhook_url protocol" }, 400);
-				}
-			} catch {
-				return jsonResponse({ ok: false, error: "Invalid webhook_url format" }, 400);
+			if (!ruleId || !tag || !value || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0 || (isEffect !== 0 && isEffect !== 1)) {
+				return jsonResponse({ ok: false, error: "Invalid body: require tag,value,interval_seconds>0,is_effect(0|1)" }, 400);
 			}
 			const upstream = await callTwitterApi(env, "POST", "/oapi/tweet_filter/update_rule", {
 				rule_id: ruleId,
 				tag,
 				value,
-				webhook_url: webhookUrl,
 				interval_seconds: intervalSeconds,
 				is_effect: isEffect,
 			});
