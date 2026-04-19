@@ -359,10 +359,6 @@ function getNotifyChatId(env) {
 	return String(env.FGADMIN_NOTIFY_CHAT_ID || "").trim();
 }
 
-function getWebhookSecret(env) {
-	return String(env.WEBHOOK_SECRET || env.CF_WEBHOOK_SECRET || "").trim();
-}
-
 async function ensureReplyEventSchema(env) {
 	if (!env.DB) {
 		throw new Error("Missing D1 binding: DB");
@@ -1685,14 +1681,6 @@ async function handleAdminConsole(request, env, url) {
 }
 
 async function handleCloudflareWebhook(request, env, url) {
-	const expectedSecret = getWebhookSecret(env);
-	if (expectedSecret) {
-		const providedSecret = String(request.headers.get("x-webhook-secret") || url.searchParams.get("secret") || "").trim();
-		if (!providedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
-			return jsonResponse({ ok: false, error: "Unauthorized webhook" }, 401);
-		}
-	}
-
 	const bodyText = await request.text().catch(() => "");
 	let payload = null;
 	try {
