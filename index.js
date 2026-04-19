@@ -785,7 +785,7 @@ function renderConsolePage() {
           <h3>新增规则（Add）</h3>
           <label>tag</label><input id="addTag" type="text" placeholder="myhook" />
           <label>value</label><input id="addValue" type="text" placeholder="from:elonmusk" />
-          <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="60" />
+          <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="300" />
           <div class="row"><button id="addRuleBtn" class="btn sm green" type="button">添加规则</button></div>
         </div>
         <div class="sub">
@@ -793,7 +793,7 @@ function renderConsolePage() {
           <label>rule_id</label><input id="updRuleId" type="text" placeholder="输入要更新的 rule_id" />
           <label>tag</label><input id="updTag" type="text" placeholder="updated-tag" />
           <label>value</label><input id="updValue" type="text" placeholder="keyword OR from:xxx" />
-          <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="60" />
+          <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="300" />
           <label>is_effect (1=启用, 0=禁用)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
           <div class="row"><button id="updRuleBtn" class="btn sm dark" type="button">更新规则</button></div>
         </div>
