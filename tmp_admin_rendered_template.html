@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Console</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 20% 8%, rgba(34, 211, 238, 0.18) 0%, rgba(34, 211, 238, 0) 42%),
+        radial-gradient(circle at 82% 20%, rgba(59, 130, 246, 0.22) 0%, rgba(59, 130, 246, 0) 45%),
+        #071022;
+      color: #e2e8f0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .wrap {
+      width: min(1160px, calc(100vw - 32px));
+      margin: 28px auto 40px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 46px;
+      letter-spacing: -0.5px;
+      color: #e2e8f0;
+      font-weight: 800;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .btn {
+      height: 42px;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      padding: 0 16px;
+      color: #e5f3ff;
+      background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+      font-weight: 700;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .btn.green {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    }
+    .btn.ghost {
+      border: 1px solid rgba(248, 113, 113, 0.6);
+      background: rgba(127, 29, 29, 0.15);
+      color: #fca5a5;
+    }
+    .panel {
+      border: 1px solid rgba(59, 130, 246, 0.26);
+      background: rgba(15, 23, 42, 0.86);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 20px 70px rgba(2, 132, 199, 0.16);
+    }
+    .head-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .metric-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-height: 170px;
+    }
+    .metric-title {
+      font-size: 15px;
+      color: #7dd3fc;
+      margin: 0 0 4px;
+    }
+    .metric-num {
+      font-size: 33px;
+      font-weight: 800;
+      margin: 0;
+      color: #f8fafc;
+      line-height: 1.1;
+      word-break: break-all;
+    }
+    .metric-sub {
+      font-size: 13px;
+      color: #93c5fd;
+      margin-top: 8px;
+      word-break: break-all;
+    }
+    .ring {
+      --pct: 0;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, #0f172a 56%, transparent 57%),
+        conic-gradient(#22d3ee calc(var(--pct) * 1%), rgba(148, 163, 184, 0.25) 0);
+      border: 1px solid rgba(125, 211, 252, 0.3);
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+    }
+    .ring span {
+      font-size: 13px;
+      color: #dbeafe;
+      font-weight: 700;
+    }
+    .section-title {
+      margin: 0 0 10px;
+      color: #34d399;
+      font-size: 21px;
+      font-weight: 700;
+    }
+    .muted {
+      color: #94a3b8;
+      font-size: 12px;
+      margin: 0 0 10px;
+    }
+    .msg {
+      min-height: 20px;
+      font-size: 14px;
+      color: #93c5fd;
+      white-space: pre-wrap;
+    }
+    .msg.err { color: #fca5a5; }
+    .mgr-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .mgr-toggle p {
+      margin: 0;
+      color: #a5b4fc;
+      font-size: 14px;
+    }
+    .mgr-content[hidden] { display: none; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .sub {
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(2, 6, 23, 0.55);
+    }
+    .sub h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: #c7d2fe;
+    }
+    label {
+      display: block;
+      margin: 8px 0 6px;
+      color: #7dd3fc;
+      font-size: 13px;
+    }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid #0f766e;
+      background: #04111f;
+      color: #e2e8f0;
+      padding: 0 12px;
+    }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .btn.sm {
+      height: 36px;
+      font-size: 13px;
+      padding: 0 12px;
+    }
+    .btn.dark {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      border: 1px solid #334155;
+      color: #dbeafe;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 13px;
+    }
+    th, td {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      padding: 8px 6px;
+      text-align: left;
+      vertical-align: top;
+      word-break: break-all;
+    }
+    th { color: #7dd3fc; }
+    pre {
+      margin: 8px 0 0;
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+      overflow: auto;
+      font-size: 12px;
+      max-height: 260px;
+    }
+    code {
+      color: #bfdbfe;
+      background: rgba(30, 41, 59, 0.7);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    @media (max-width: 980px) {
+      h1 { font-size: 34px; }
+      .head-grid, .grid-2 { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .actions { width: 100%; }
+      .actions .btn { flex: 1; }
+    }
+    @media (max-width: 520px) {
+      .metric-card { flex-direction: column; align-items: flex-start; }
+      .ring { width: 102px; height: 102px; }
+      .metric-num { font-size: 28px; }
+    }
+    form.inline { margin: 0; }
+    .link-box {
+      font-size: 13px;
+      color: #bfdbfe;
+      word-break: break-all;
+      margin: 0;
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(34, 197, 94, 0.16);
+      color: #86efac;
+    }
+    .k-title {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #7dd3fc;
+    }
+    .small-table-wrap {
+      overflow: auto;
+      max-height: 360px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+    }
+    .small-table-wrap table { margin-top: 0; }
+    .log-body {
+      max-width: 360px;
+      white-space: pre-wrap;
+      font-size: 12px;
+      color: #cbd5e1;
+    }
+    .json-row { background: rgba(2, 6, 23, 0.65); }
+    .json-box {
+      margin: 8px 0 4px;
+      max-height: 300px;
+      overflow: auto;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 8px;
+      padding: 10px;
+      background: rgba(2, 6, 23, 0.9);
+      white-space: pre-wrap;
+      font-size: 12px;
+      color: #dbeafe;
+    }
+    .btn.json {
+      height: 30px;
+      font-size: 12px;
+      padding: 0 10px;
+    }
+    .nowrap { white-space: nowrap; }
+    .h-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .h-actions .left { font-size: 13px; color: #bfdbfe; }
+    .h-actions .right { display: flex; gap: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .copy-btn {
+      border: 1px solid rgba(125, 211, 252, 0.5);
+      background: rgba(15, 23, 42, 0.8);
+      color: #dbeafe;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <h1>Dashboard</h1>
+      <div class="actions">
+        <button id="refreshBalance" class="btn">Refresh Balance</button>
+        <form method="post" action="/admin/logout" class="inline"><button class="btn ghost" type="submit">Sign Out</button></form>
+        <a href="/admin/docs" target="_blank" rel="noopener noreferrer" class="btn dark" style="text-decoration:none;display:inline-flex;align-items:center;">Docs</a>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="head-grid">
+        <div class="metric-card">
+          <div id="ringRemaining" class="ring" style="--pct:0"><span id="remainingPct">0%</span></div>
+          <div>
+            <p class="metric-title">Remaining Credits</p>
+            <p id="remainingValue" class="metric-num">-</p>
+            <div id="balanceHint" class="metric-sub">Waiting for refresh</div>
+          </div>
+        </div>
+        <div class="metric-card">
+          <div id="ringTotal" class="ring" style="--pct:0"><span id="totalPct">0%</span></div>
+          <div>
+            <p class="metric-title">Total Credits</p>
+            <p id="totalValue" class="metric-num">-</p>
+            <div id="usedValue" class="metric-sub">Used: -</div>
+          </div>
+        </div>
+      </div>
+      <p class="muted">Data source: <code>GET /oapi/my/info</code></p>
+      <div id="balanceMsg" class="msg"></div>
+      <pre id="balanceRaw">{}</pre>
+    </section>
+
+    <section class="panel">
+      <div class="mgr-toggle">
+        <div>
+          <h2 class="section-title">Webhook Manager</h2>
+          <p>Click to open CRUD panels and Cloudflare webhook monitoring.</p>
+        </div>
+        <button id="toggleManager" class="btn green">Open Webhook Manager</button>
+      </div>
+    </section>
+
+    <section id="managerSection" class="panel mgr-content" hidden>
+      <div class="h-actions">
+        <div class="left">Tweet Filter Rule CRUD + this Worker's webhook monitor</div>
+        <div class="right">
+          <button id="refreshRules" class="btn sm">Fetch Rules</button>
+          <button id="refreshLogs" class="btn sm dark">Refresh Logs</button>
+        </div>
+      </div>
+
+      <div class="sub">
+        <h3>Get Rules (Get All)</h3>
+        <div class="small-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>rule_id</th>
+                <th>tag</th>
+                <th>value</th>
+                <th>interval</th>
+                <th>is_effect</th>
+              </tr>
+            </thead>
+            <tbody id="rulesTableBody"><tr><td colspan="5" class="muted">No data</td></tr></tbody>
+          </table>
+        </div>
+        <div id="ruleMsg" class="msg"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="sub">
+          <h3>Add Rule</h3>
+          <label>tag</label><input id="addTag" type="text" placeholder="myhook" />
+          <label>value</label><input id="addValue" type="text" placeholder="from:elonmusk" />
+          <label>interval_seconds</label><input id="addInterval" type="number" min="0.1" step="0.1" value="300" />
+          <div class="row"><button id="addRuleBtn" class="btn sm green" type="button">Add Rule</button></div>
+        </div>
+        <div class="sub">
+          <h3>Update Rule</h3>
+          <label>rule_id</label><input id="updRuleId" type="text" placeholder="rule_id to update" />
+          <label>tag</label><input id="updTag" type="text" placeholder="updated-tag" />
+          <label>value</label><input id="updValue" type="text" placeholder="keyword OR from:xxx" />
+          <label>interval_seconds</label><input id="updInterval" type="number" min="0.1" step="0.1" value="300" />
+          <label>is_effect (1=enabled, 0=disabled)</label><input id="updEffect" type="number" min="0" max="1" step="1" value="1" />
+          <div class="row"><button id="updRuleBtn" class="btn sm dark" type="button">Update Rule</button></div>
+        </div>
+        <div class="sub">
+          <h3>Delete Rule</h3>
+          <label>rule_id</label><input id="delRuleId" type="text" placeholder="rule_id to delete" />
+          <div class="row"><button id="delRuleBtn" class="btn sm dark" type="button">Delete Rule</button></div>
+        </div>
+        <div class="sub">
+          <h3>Monitor Cloudflare Webhook</h3>
+          <p class="k-title">Webhook URL</p>
+          <p id="webhookUrl" class="link-box mono"></p>
+          <div class="row">
+            <button id="copyWebhookBtn" class="copy-btn" type="button">Copy URL</button>
+            <span class="pill">Every access is logged</span>
+          </div>
+          <div class="row">
+            <button id="clearLogsBtn" class="btn sm dark" type="button">Clear Logs</button>
+          </div>
+          <div id="logMsg" class="msg"></div>
+        </div>
+      </div>
+
+      <div class="sub" style="margin-top: 12px;">
+        <h3>Access Logs</h3>
+        <div class="small-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="nowrap">time</th>
+                <th>method</th>
+                <th>path</th>
+                <th>query</th>
+                <th>ip</th>
+                <th>ua</th>
+                <th>action</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody"><tr><td colspan="7" class="muted">No webhook logs</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+    const balanceMsg = document.getElementById("balanceMsg");
+    const ruleMsg = document.getElementById("ruleMsg");
+    const logMsg = document.getElementById("logMsg");
+    const managerSection = document.getElementById("managerSection");
+    const toggleManagerBtn = document.getElementById("toggleManager");
+    const remainingValue = document.getElementById("remainingValue");
+    const totalValue = document.getElementById("totalValue");
+    const usedValue = document.getElementById("usedValue");
+    const remainingPct = document.getElementById("remainingPct");
+    const totalPct = document.getElementById("totalPct");
+    const balanceHint = document.getElementById("balanceHint");
+    const ringRemaining = document.getElementById("ringRemaining");
+    const ringTotal = document.getElementById("ringTotal");
+    const balanceRaw = document.getElementById("balanceRaw");
+    const rulesBody = document.getElementById("rulesTableBody");
+    const logsBody = document.getElementById("logsTableBody");
+    const webhookUrlEl = document.getElementById("webhookUrl");
+    let webhookRowsCache = [];
+
+    function setMsg(el, text, isError = false) {
+      el.textContent = text || "";
+      el.className = isError ? "msg err" : "msg";
+    }
+
+    async function api(path, options) {
+      const res = await fetch(path, options || {});
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || ("HTTP " + res.status));
+      }
+      return data;
+    }
+
+    function numOrDash(v) {
+      if (v === null || v === undefined || v === "") return "-";
+      const n = Number(v);
+      return Number.isFinite(n) ? String(n) : String(v);
+    }
+
+    function toNum(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function firstDefined() {
+      for (let i = 0; i < arguments.length; i += 1) {
+        const v = arguments[i];
+        if (v !== null && v !== undefined) return v;
+      }
+      return null;
+    }
+
+    function pct(remaining, total) {
+      if (total <= 0) return 0;
+      return Math.max(0, Math.min(100, (remaining / total) * 100));
+    }
+
+    async function refreshBalance() {
+      setMsg(balanceMsg, "Loading balance...");
+      try {
+        const res = await api("/admin/api/balance");
+        const d = res.data || {};
+
+        const nRecharge = toNum(d.recharge_credits);
+        const nBonus = toNum(firstDefined(d.total_bonus_credits, d.bonus_credits, d.remaining_bonus_credits));
+        const nDirectRemaining = toNum(firstDefined(d.remaining_credits, d.balance, d.credits));
+        let nRem = nDirectRemaining;
+        if (nRem === null && (nRecharge !== null || nBonus !== null)) {
+          nRem = (nRecharge || 0) + (nBonus || 0);
+        }
+
+        let total = firstDefined(d.total_credits, d.all_credits, d.granted_credits);
+        let used = firstDefined(d.used_credits, d.total_used_credits);
+        const nUsedRecharge = toNum(d.used_recharge_credits);
+        const nUsedBonus = toNum(d.used_bonus_credits);
+        if (used === null && (nUsedRecharge !== null || nUsedBonus !== null)) {
+          used = (nUsedRecharge || 0) + (nUsedBonus || 0);
+        }
+
+        if (total === null && nRem !== null && used !== null) {
+          const nUsed = toNum(used);
+          if (nUsed !== null) total = nRem + nUsed;
+        }
+        if (total === null && nRem !== null) {
+          total = nRem;
+        }
+
+        const nTotal = toNum(total);
+        if (used === null && nTotal !== null && nRem !== null) {
+          used = nTotal - nRem;
+        }
+        const nUsed = toNum(used);
+        const p = nRem !== null && nTotal !== null ? pct(nRem, nTotal) : (nRem && nRem > 0 ? 100 : 0);
+        const pTotal = nTotal !== null && nTotal > 0 ? 100 : 0;
+
+        remainingValue.textContent = numOrDash(nRem);
+        totalValue.textContent = numOrDash(total);
+        usedValue.textContent = numOrDash(used);
+        remainingPct.textContent = Math.round(p) + "%";
+        totalPct.textContent = Math.round(pTotal) + "%";
+        ringRemaining.style.setProperty("--pct", String(p));
+        ringTotal.style.setProperty("--pct", String(pTotal));
+        balanceHint.textContent = nUsed !== null ? ("Used: " + numOrDash(used)) : "Used: -";
+        balanceRaw.textContent = JSON.stringify(d, null, 2);
+        setMsg(balanceMsg, "Balance updated");
+      } catch (err) {
+        setMsg(balanceMsg, err.message || "Failed to fetch balance", true);
+      }
+    }
+
+    function renderRules(list) {
+      const arr = Array.isArray(list) ? list : [];
+      if (arr.length === 0) {
+        rulesBody.innerHTML = '<tr><td colspan="5" class="muted">No data</td></tr>';
+        return;
+      }
+      const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      rulesBody.innerHTML = arr.map((r) => {
+        const id = firstDefined(r.rule_id, r.id, "");
+        const tag = firstDefined(r.tag, "");
+        const value = firstDefined(r.value, "");
+        const interval = firstDefined(r.interval_seconds, "");
+        const effect = firstDefined(r.is_effect, "");
+        return '<tr>' +
+          '<td>' + esc(id) + '</td>' +
+          '<td>' + esc(tag) + '</td>' +
+          '<td>' + esc(value) + '</td>' +
+          '<td>' + esc(interval) + '</td>' +
+          '<td>' + esc(effect) + '</td>' +
+          '</tr>';
+      }).join("");
+    }
+
+    async function refreshRules() {
+      setMsg(ruleMsg, "Fetching rules...");
+      try {
+        const res = await api("/admin/api/rules");
+        const list = res.rules || res.data || [];
+        renderRules(list);
+        setMsg(ruleMsg, "Rules updated");
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "Failed to fetch rules", true);
+      }
+    }
+
+    function esc(v) {
+      return String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    async function refreshWebhookLogs() {
+      setMsg(logMsg, "Loading webhook logs...");
+      try {
+        const res = await api("/admin/api/webhook/logs?limit=120");
+        const rows = Array.isArray(res.logs) ? res.logs : [];
+        webhookRowsCache = rows;
+        if (rows.length === 0) {
+          logsBody.innerHTML = '<tr><td colspan="7" class="muted">No webhook logs</td></tr>';
+        } else {
+          logsBody.innerHTML = rows.map((r, idx) => {
+            const bodyPreview = String(r.body_text || "").slice(0, 80);
+            return '<tr>' +
+              '<td class="nowrap">' + esc(r.created_at || "") + '</td>' +
+              '<td>' + esc(r.method || "") + '</td>' +
+              '<td>' + esc(r.path || "") + '</td>' +
+              '<td>' + esc(r.query || "") + '</td>' +
+              '<td>' + esc(r.ip || "") + '</td>' +
+              '<td>' + esc(r.user_agent || "") + '<div class="muted">' + esc(bodyPreview) + '</div></td>' +
+              '<td><button class="btn dark json view-json-btn" data-idx="' + idx + '" type="button">View JSON</button></td>' +
+              '</tr>' +
+              '<tr id="json-row-' + idx + '" class="json-row" style="display:none;"><td colspan="7"><div id="json-box-' + idx + '" class="json-box mono"></div></td></tr>';
+          }).join("");
+          bindLogJsonButtons();
+        }
+        setMsg(logMsg, "Logs updated");
+      } catch (err) {
+        setMsg(logMsg, err.message || "Failed to fetch logs", true);
+      }
+    }
+
+    function bindLogJsonButtons() {
+      const buttons = logsBody.querySelectorAll(".view-json-btn");
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-idx"));
+          const row = document.getElementById("json-row-" + idx);
+          const box = document.getElementById("json-box-" + idx);
+          if (!row || !box) return;
+          const isOpen = row.style.display !== "none";
+          if (isOpen) {
+            row.style.display = "none";
+            btn.textContent = "View JSON";
+            return;
+          }
+          const item = webhookRowsCache[idx] || {};
+          const merged = {
+            id: item.id,
+            created_at: item.created_at,
+            method: item.method,
+            path: item.path,
+            query: item.query,
+            ip: item.ip,
+            user_agent: item.user_agent,
+            body: (() => {
+              const raw = String(item.body_text || "");
+              try {
+                return JSON.parse(raw);
+              } catch {
+                return raw;
+              }
+            })(),
+          };
+          box.textContent = JSON.stringify(merged, null, 2);
+          row.style.display = "";
+          btn.textContent = "Hide JSON";
+        });
+      });
+    }
+
+    document.getElementById("refreshBalance").addEventListener("click", refreshBalance);
+    document.getElementById("refreshRules").addEventListener("click", refreshRules);
+    document.getElementById("refreshLogs").addEventListener("click", refreshWebhookLogs);
+
+    document.getElementById("addRuleBtn").addEventListener("click", async () => {
+      const tag = document.getElementById("addTag").value.trim();
+      const value = document.getElementById("addValue").value.trim();
+      const interval = Number(document.getElementById("addInterval").value);
+      if (!tag || !value || !Number.isFinite(interval) || interval <= 0) {
+        setMsg(ruleMsg, "Missing add-rule parameters", true);
+        return;
+      }
+      setMsg(ruleMsg, "Adding rule...");
+      try {
+        await api("/admin/api/rules", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tag, value, interval_seconds: interval }),
+        });
+        setMsg(ruleMsg, "Rule added");
+        await refreshRules();
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "Failed to add rule", true);
+      }
+    });
+
+    document.getElementById("updRuleBtn").addEventListener("click", async () => {
+      const ruleId = document.getElementById("updRuleId").value.trim();
+      const tag = document.getElementById("updTag").value.trim();
+      const value = document.getElementById("updValue").value.trim();
+      const interval = Number(document.getElementById("updInterval").value);
+      const effect = Number(document.getElementById("updEffect").value);
+      if (!ruleId || !tag || !value || !Number.isFinite(interval) || interval <= 0 || (effect !== 0 && effect !== 1)) {
+        setMsg(ruleMsg, "Missing update-rule parameters", true);
+        return;
+      }
+      setMsg(ruleMsg, "Updating rule...");
+      try {
+        await api("/admin/api/rules/" + encodeURIComponent(ruleId), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tag, value, interval_seconds: interval, is_effect: effect }),
+        });
+        setMsg(ruleMsg, "Rule updated");
+        await refreshRules();
+        const shouldOpen = window.confirm("Rule updated.\nTo configure webhook URL, open the official console.\nOpen now?");
+        if (shouldOpen) {
+          window.open("https://twitterapi.io/tweet-filter-rules", "_blank", "noopener,noreferrer");
+        }
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "Failed to update rule", true);
+      }
+    });
+
+    document.getElementById("delRuleBtn").addEventListener("click", async () => {
+      const ruleId = document.getElementById("delRuleId").value.trim();
+      if (!ruleId) {
+        setMsg(ruleMsg, "Please provide rule_id", true);
+        return;
+      }
+      setMsg(ruleMsg, "Deleting rule...");
+      try {
+        await api("/admin/api/rules/" + encodeURIComponent(ruleId), { method: "DELETE" });
+        setMsg(ruleMsg, "Rule deleted");
+        await refreshRules();
+      } catch (err) {
+        setMsg(ruleMsg, err.message || "Failed to delete rule", true);
+      }
+    });
+
+    document.getElementById("clearLogsBtn").addEventListener("click", async () => {
+      setMsg(logMsg, "Clearing logs...");
+      try {
+        await api("/admin/api/webhook/logs", { method: "DELETE" });
+        setMsg(logMsg, "Logs cleared");
+        await refreshWebhookLogs();
+      } catch (err) {
+        setMsg(logMsg, err.message || "Failed to clear logs", true);
+      }
+    });
+
+    toggleManagerBtn.addEventListener("click", async () => {
+      const willOpen = managerSection.hidden;
+      managerSection.hidden = !willOpen ? true : false;
+      toggleManagerBtn.textContent = willOpen ? "Collapse Webhook Manager" : "Open Webhook Manager";
+      if (willOpen) {
+        await refreshRules();
+        await refreshWebhookLogs();
+      }
+    });
+
+    const webhookUrl = location.origin + "/cf-webhook";
+    webhookUrlEl.textContent = webhookUrl;
+    document.getElementById("copyWebhookBtn").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(webhookUrl);
+        setMsg(logMsg, "Webhook URL copied");
+      } catch {
+        setMsg(logMsg, "Copy failed, please copy manually", true);
+      }
+    });
+
+    refreshBalance();
+  </script>
+</body>
+</html>

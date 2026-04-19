@@ -1266,7 +1266,7 @@ function renderConsolePage() {
         });
         setMsg(ruleMsg, "Rule updated");
         await refreshRules();
-        const shouldOpen = window.confirm("Rule updated.\nTo configure webhook URL, open the official console.\nOpen now?");
+        const shouldOpen = window.confirm("Rule updated.\\nTo configure webhook URL, open the official console.\\nOpen now?");
         if (shouldOpen) {
           window.open("https://twitterapi.io/tweet-filter-rules", "_blank", "noopener,noreferrer");
         }
