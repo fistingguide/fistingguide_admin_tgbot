@@ -729,7 +729,7 @@ function renderConsolePage() {
           </div>
         </div>
         <div class="metric-card">
-          <div id="ringTotal" class="ring" style="--pct:100"><span>100%</span></div>
+          <div id="ringTotal" class="ring" style="--pct:0"><span id="totalPct">0%</span></div>
           <div>
             <p class="metric-title">总余额 / Total Credits</p>
             <p id="totalValue" class="metric-num">-</p>
@@ -848,8 +848,10 @@ function renderConsolePage() {
     const totalValue = document.getElementById("totalValue");
     const usedValue = document.getElementById("usedValue");
     const remainingPct = document.getElementById("remainingPct");
+    const totalPct = document.getElementById("totalPct");
     const balanceHint = document.getElementById("balanceHint");
     const ringRemaining = document.getElementById("ringRemaining");
+    const ringTotal = document.getElementById("ringTotal");
     const balanceRaw = document.getElementById("balanceRaw");
     const rulesBody = document.getElementById("rulesTableBody");
     const logsBody = document.getElementById("logsTableBody");
@@ -890,26 +892,46 @@ function renderConsolePage() {
       try {
         const res = await api("/admin/api/balance");
         const d = res.data || {};
-        const remaining = d.remaining_credits ?? d.recharge_credits ?? d.balance ?? d.credits ?? null;
-        let total = d.total_credits ?? d.all_credits ?? null;
+
+        const nRecharge = toNum(d.recharge_credits);
+        const nBonus = toNum(d.total_bonus_credits ?? d.bonus_credits ?? d.remaining_bonus_credits);
+        const nDirectRemaining = toNum(d.remaining_credits ?? d.balance ?? d.credits);
+        let nRem = nDirectRemaining;
+        if (nRem === null && (nRecharge !== null || nBonus !== null)) {
+          nRem = (nRecharge || 0) + (nBonus || 0);
+        }
+
+        let total = d.total_credits ?? d.all_credits ?? d.granted_credits ?? null;
         let used = d.used_credits ?? d.total_used_credits ?? null;
-        const nRem = toNum(remaining);
+        const nUsedRecharge = toNum(d.used_recharge_credits);
+        const nUsedBonus = toNum(d.used_bonus_credits);
+        if (used === null && (nUsedRecharge !== null || nUsedBonus !== null)) {
+          used = (nUsedRecharge || 0) + (nUsedBonus || 0);
+        }
+
         if (total === null && nRem !== null && used !== null) {
           const nUsed = toNum(used);
           if (nUsed !== null) total = nRem + nUsed;
         }
+        if (total === null && nRem !== null) {
+          total = nRem;
+        }
+
         const nTotal = toNum(total);
         if (used === null && nTotal !== null && nRem !== null) {
           used = nTotal - nRem;
         }
         const nUsed = toNum(used);
-        const p = nRem !== null && nTotal !== null ? pct(nRem, nTotal) : 0;
+        const p = nRem !== null && nTotal !== null ? pct(nRem, nTotal) : (nRem && nRem > 0 ? 100 : 0);
+        const pTotal = nTotal !== null && nTotal > 0 ? 100 : 0;
 
-        remainingValue.textContent = numOrDash(remaining);
+        remainingValue.textContent = numOrDash(nRem);
         totalValue.textContent = numOrDash(total);
         usedValue.textContent = numOrDash(used);
         remainingPct.textContent = Math.round(p) + "%";
+        totalPct.textContent = Math.round(pTotal) + "%";
         ringRemaining.style.setProperty("--pct", String(p));
+        ringTotal.style.setProperty("--pct", String(pTotal));
         balanceHint.textContent = nUsed !== null ? ("已使用: " + numOrDash(used)) : "已使用: -";
         balanceRaw.textContent = JSON.stringify(d, null, 2);
         setMsg(balanceMsg, "余额已更新");
@@ -1263,19 +1285,34 @@ async function handleAdminConsole(request, env, url) {
 			if (!ruleId) {
 				return jsonResponse({ ok: false, error: "rule_id is required" }, 400);
 			}
-			const upstream = await callTwitterApi(env, "DELETE", "/oapi/tweet_filter/delete_rule", { rule_id: ruleId });
-			if (!upstream.ok) {
-				return jsonResponse(
-					{
-						ok: false,
-						error: upstream.error,
-						upstream_status: upstream.status,
-						data: upstream.data,
-					},
-					500
-				);
+
+			const attempts = [];
+			const try1 = await callTwitterApi(env, "POST", "/oapi/tweet_filter/delete_rule", { rule_id: ruleId });
+			attempts.push({ name: "POST rule_id", ok: try1.ok, status: try1.status, data: try1.data, error: try1.error });
+			if (try1.ok) {
+				return jsonResponse({ ok: true, data: try1.data });
 			}
-			return jsonResponse({ ok: true, data: upstream.data });
+
+			const try2 = await callTwitterApi(env, "POST", "/oapi/tweet_filter/delete_rule", { id: ruleId });
+			attempts.push({ name: "POST id", ok: try2.ok, status: try2.status, data: try2.data, error: try2.error });
+			if (try2.ok) {
+				return jsonResponse({ ok: true, data: try2.data });
+			}
+
+			const try3 = await callTwitterApi(env, "DELETE", "/oapi/tweet_filter/delete_rule", { rule_id: ruleId });
+			attempts.push({ name: "DELETE rule_id", ok: try3.ok, status: try3.status, data: try3.data, error: try3.error });
+			if (try3.ok) {
+				return jsonResponse({ ok: true, data: try3.data });
+			}
+
+			return jsonResponse(
+				{
+					ok: false,
+					error: "Delete rule failed in all request variants",
+					attempts,
+				},
+				502
+			);
 		}
 
 		return jsonResponse({ ok: false, error: "Not found" }, 404);
