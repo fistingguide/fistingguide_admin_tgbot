@@ -473,10 +473,14 @@ async function notifyDataBotReply(env, event) {
 	const token = getDataBotToken(env);
 	const chatId = getDataBotChatId(env);
 	if (!token || !chatId) return;
+	const verifiedText = Number(event.isVerified) === 1 ? "yes" : "no";
 	const text = [
 		"New Reply Received",
 		`Author: ${event.author_name || "-"} (@${event.author_username || "-"})`,
 		`Author ID: ${event.author_id || "-"}`,
+		`Verified: ${verifiedText}`,
+		`Followers: ${event.followers ?? "-"}`,
+		`View Count: ${event.viewCount ?? "-"}`,
 		`Tweet ID: ${event.tweet_id}`,
 		`Reply To: ${event.in_reply_to_id || "-"}`,
 		`Rule: ${event.rule_tag || "-"} (${event.rule_id || "-"})`,
