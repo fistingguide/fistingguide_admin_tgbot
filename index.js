@@ -1708,6 +1708,9 @@ async function handleCloudflareWebhook(request, env, url) {
 	}
 
 	let insertedCount = 0;
+	let notifyAttempted = 0;
+	let notifySent = 0;
+	const notifyErrors = [];
 	if (payload && typeof payload === "object") {
 		const replyEvents = extractReplyEventsFromWebhookPayload(payload);
 		for (const ev of replyEvents) {
@@ -1715,9 +1718,20 @@ async function handleCloudflareWebhook(request, env, url) {
 				const inserted = await insertReplyEventIfNew(env, ev);
 				if (inserted) {
 					insertedCount += 1;
-					await notifyReplyViaAdminBot(env, ev).catch((notifyErr) => {
-						console.error("Admin bot notify failed:", notifyErr);
-					});
+					notifyAttempted += 1;
+					await notifyReplyViaAdminBot(env, ev)
+						.then(() => {
+							notifySent += 1;
+						})
+						.catch((notifyErr) => {
+							const msg = String(notifyErr?.message || notifyErr);
+							notifyErrors.push({
+								tweet_id: ev.tweet_id,
+								author_id: ev.author_id,
+								error: msg,
+							});
+							console.error("Admin bot notify failed:", notifyErr);
+						});
 				}
 			} catch (insertErr) {
 				console.error("Insert reply event failed:", insertErr);
@@ -1731,6 +1745,9 @@ async function handleCloudflareWebhook(request, env, url) {
 		path: url.pathname,
 		method: request.method,
 		new_replies: insertedCount,
+		notify_attempted: notifyAttempted,
+		notify_sent: notifySent,
+		notify_errors: notifyErrors,
 		ts: new Date().toISOString(),
 	});
 }
