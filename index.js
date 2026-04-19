@@ -356,7 +356,7 @@ function getNotifyBotToken(env) {
 }
 
 function getNotifyChatId(env) {
-	return String(env.FGADMIN_NOTIFY_CHAT_ID || env.TG_NOTIFY_CHAT_ID || env.DATABOT_CHAT_ID || "").trim();
+	return String(env.FGADMIN_NOTIFY_CHAT_ID || "").trim();
 }
 
 function getWebhookSecret(env) {
