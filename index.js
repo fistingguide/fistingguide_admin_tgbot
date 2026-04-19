@@ -351,12 +351,12 @@ async function clearWebhookLogs(env) {
 	await env.DB.prepare("DELETE FROM admin_webhook_logs").run();
 }
 
-function getDataBotToken(env) {
-	return String(env.DATABOT_BOT_TOKEN || env.DATABOT_TOKEN || env.DATA_BOT_TOKEN || "").trim();
+function getNotifyBotToken(env) {
+	return String(env.FGADMIN_BOT_TOKEN || env.TG_BOT_TOKEN || env.CREDIT_TG_BOT_TOKEN || env.DATABOT_BOT_TOKEN || "").trim();
 }
 
-function getDataBotChatId(env) {
-	return String(env.DATABOT_CHAT_ID || env.DATA_BOT_CHAT_ID || env.TG_NOTIFY_CHAT_ID || "").trim();
+function getNotifyChatId(env) {
+	return String(env.FGADMIN_NOTIFY_CHAT_ID || env.TG_NOTIFY_CHAT_ID || env.DATABOT_CHAT_ID || "").trim();
 }
 
 async function ensureReplyEventSchema(env) {
@@ -469,9 +469,9 @@ async function tgWithToken(token, method, payload) {
 	}
 }
 
-async function notifyDataBotReply(env, event) {
-	const token = getDataBotToken(env);
-	const chatId = getDataBotChatId(env);
+async function notifyReplyViaAdminBot(env, event) {
+	const token = getNotifyBotToken(env);
+	const chatId = getNotifyChatId(env);
 	if (!token || !chatId) return;
 	const verifiedText = Number(event.isVerified) === 1 ? "yes" : "no";
 	const text = [
@@ -1695,8 +1695,8 @@ async function handleCloudflareWebhook(request, env, url) {
 				const inserted = await insertReplyEventIfNew(env, ev);
 				if (inserted) {
 					insertedCount += 1;
-					await notifyDataBotReply(env, ev).catch((notifyErr) => {
-						console.error("DataBot notify failed:", notifyErr);
+					await notifyReplyViaAdminBot(env, ev).catch((notifyErr) => {
+						console.error("Admin bot notify failed:", notifyErr);
 					});
 				}
 			} catch (insertErr) {
