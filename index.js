@@ -687,6 +687,24 @@ function renderConsolePage() {
       font-size: 12px;
       color: #cbd5e1;
     }
+    .json-row { background: rgba(2, 6, 23, 0.65); }
+    .json-box {
+      margin: 8px 0 4px;
+      max-height: 300px;
+      overflow: auto;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 8px;
+      padding: 10px;
+      background: rgba(2, 6, 23, 0.9);
+      white-space: pre-wrap;
+      font-size: 12px;
+      color: #dbeafe;
+    }
+    .btn.json {
+      height: 30px;
+      font-size: 12px;
+      padding: 0 10px;
+    }
     .nowrap { white-space: nowrap; }
     .h-actions {
       display: flex;
@@ -832,7 +850,7 @@ function renderConsolePage() {
                 <th>query</th>
                 <th>ip</th>
                 <th>ua</th>
-                <th>body</th>
+                <th>action</th>
               </tr>
             </thead>
             <tbody id="logsTableBody"><tr><td colspan="7" class="muted">暂无 webhook 访问记录</td></tr></tbody>
@@ -859,6 +877,7 @@ function renderConsolePage() {
     const rulesBody = document.getElementById("rulesTableBody");
     const logsBody = document.getElementById("logsTableBody");
     const webhookUrlEl = document.getElementById("webhookUrl");
+    let webhookRowsCache = [];
 
     function setMsg(el, text, isError = false) {
       el.textContent = text || "";
@@ -987,25 +1006,68 @@ function renderConsolePage() {
       try {
         const res = await api("/admin/api/webhook/logs?limit=120");
         const rows = Array.isArray(res.logs) ? res.logs : [];
+        webhookRowsCache = rows;
         if (rows.length === 0) {
           logsBody.innerHTML = '<tr><td colspan="7" class="muted">暂无 webhook 访问记录</td></tr>';
         } else {
-          logsBody.innerHTML = rows.map((r) => {
+          logsBody.innerHTML = rows.map((r, idx) => {
+            const bodyPreview = String(r.body_text || "").slice(0, 80);
             return '<tr>' +
               '<td class="nowrap">' + esc(r.created_at || "") + '</td>' +
               '<td>' + esc(r.method || "") + '</td>' +
               '<td>' + esc(r.path || "") + '</td>' +
               '<td>' + esc(r.query || "") + '</td>' +
               '<td>' + esc(r.ip || "") + '</td>' +
-              '<td>' + esc(r.user_agent || "") + '</td>' +
-              '<td><div class="log-body">' + esc(r.body_text || "") + '</div></td>' +
-              '</tr>';
+              '<td>' + esc(r.user_agent || "") + '<div class="muted">' + esc(bodyPreview) + '</div></td>' +
+              '<td><button class="btn dark json view-json-btn" data-idx="' + idx + '" type="button">查看 JSON</button></td>' +
+              '</tr>' +
+              '<tr id="json-row-' + idx + '" class="json-row" style="display:none;"><td colspan="7"><div id="json-box-' + idx + '" class="json-box mono"></div></td></tr>';
           }).join("");
+          bindLogJsonButtons();
         }
         setMsg(logMsg, "日志已更新");
       } catch (err) {
         setMsg(logMsg, err.message || "日志获取失败", true);
       }
+    }
+
+    function bindLogJsonButtons() {
+      const buttons = logsBody.querySelectorAll(".view-json-btn");
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-idx"));
+          const row = document.getElementById("json-row-" + idx);
+          const box = document.getElementById("json-box-" + idx);
+          if (!row || !box) return;
+          const isOpen = row.style.display !== "none";
+          if (isOpen) {
+            row.style.display = "none";
+            btn.textContent = "查看 JSON";
+            return;
+          }
+          const item = webhookRowsCache[idx] || {};
+          const merged = {
+            id: item.id,
+            created_at: item.created_at,
+            method: item.method,
+            path: item.path,
+            query: item.query,
+            ip: item.ip,
+            user_agent: item.user_agent,
+            body: (() => {
+              const raw = String(item.body_text || "");
+              try {
+                return JSON.parse(raw);
+              } catch {
+                return raw;
+              }
+            })(),
+          };
+          box.textContent = JSON.stringify(merged, null, 2);
+          row.style.display = "";
+          btn.textContent = "收起 JSON";
+        });
+      });
     }
 
     document.getElementById("refreshBalance").addEventListener("click", refreshBalance);
